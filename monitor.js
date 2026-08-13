@@ -63,7 +63,7 @@ function resolveConfiguredPath(configPath, environmentVariable) {
   return path.resolve(ROOT, process.env[environmentVariable] || configPath);
 }
 
-function validateConfig(config) {
+export function validateConfig(config) {
   const required = [
     [config?.movie?.filmId, "movie.filmId"],
     [config?.movie?.requiredExperienceTypes?.length, "movie.requiredExperienceTypes"],
@@ -72,17 +72,62 @@ function validateConfig(config) {
     [config?.seats?.preferredRows?.length, "seats.preferredRows"],
     [config?.seats?.allowedTypes?.length, "seats.allowedTypes"],
     [config?.seats?.minimumAdjacent, "seats.minimumAdjacent"],
+    [config?.seats?.bestAdjacent, "seats.bestAdjacent"],
+    [config?.seats?.minimumNumber, "seats.minimumNumber"],
+    [config?.seats?.maximumNumber, "seats.maximumNumber"],
+    [config?.monitoring?.hotRescanMinutes, "monitoring.hotRescanMinutes"],
+    [config?.monitoring?.warmRescanMinutes, "monitoring.warmRescanMinutes"],
+    [config?.monitoring?.coldRescanMinutes, "monitoring.coldRescanMinutes"],
+    [config?.monitoring?.stateFile, "monitoring.stateFile"],
+    [config?.monitoring?.logFile, "monitoring.logFile"],
+    [config?.notifications?.discord, "notifications.discord"],
     [config?.api?.theatricalBaseUrl, "api.theatricalBaseUrl"],
     [config?.api?.ticketingBaseUrl, "api.ticketingBaseUrl"]
   ];
   for (const [value, label] of required) {
     if (!value) throw new Error(`Missing required configuration: ${label}`);
   }
+  const positiveIntegers = [
+    [config.seats.minimumAdjacent, "seats.minimumAdjacent"],
+    [config.seats.bestAdjacent, "seats.bestAdjacent"],
+    [config.seats.minimumNumber, "seats.minimumNumber"],
+    [config.seats.maximumNumber, "seats.maximumNumber"],
+    [config.monitoring.hotRescanMinutes, "monitoring.hotRescanMinutes"],
+    [config.monitoring.warmRescanMinutes, "monitoring.warmRescanMinutes"],
+    [config.monitoring.coldRescanMinutes, "monitoring.coldRescanMinutes"]
+  ];
+  for (const [value, label] of positiveIntegers) {
+    if (!Number.isInteger(value) || value < 1) throw new Error(`${label} must be a positive integer.`);
+  }
   if (config.seats.bestAdjacent < config.seats.minimumAdjacent) {
     throw new Error("seats.bestAdjacent must be at least seats.minimumAdjacent.");
   }
-  if ((config.monitoring.retryAttempts ?? 3) < 1) {
-    throw new Error("monitoring.retryAttempts must be at least 1.");
+  if (config.seats.maximumNumber < config.seats.minimumNumber) {
+    throw new Error("seats.maximumNumber must be at least seats.minimumNumber.");
+  }
+  if (!Number.isInteger(config.monitoring.retryAttempts ?? 3) || (config.monitoring.retryAttempts ?? 3) < 1) {
+    throw new Error("monitoring.retryAttempts must be a positive integer.");
+  }
+  if (!Number.isFinite(config.monitoring.timeoutSeconds ?? 25)
+    || !Number.isFinite(config.monitoring.retryDelaySeconds ?? 4)
+    || (config.monitoring.timeoutSeconds ?? 25) <= 0
+    || (config.monitoring.retryDelaySeconds ?? 4) < 0) {
+    throw new Error("Monitoring timeout must be positive and retry delay cannot be negative.");
+  }
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: config.theatre.timezone }).format();
+  } catch {
+    throw new Error(`Invalid theatre.timezone: ${config.theatre.timezone}`);
+  }
+  for (const [value, label] of [
+    [config.api.theatricalBaseUrl, "api.theatricalBaseUrl"],
+    [config.api.ticketingBaseUrl, "api.ticketingBaseUrl"]
+  ]) {
+    try {
+      if (new URL(value).protocol !== "https:") throw new Error();
+    } catch {
+      throw new Error(`${label} must be a valid HTTPS URL.`);
+    }
   }
 }
 

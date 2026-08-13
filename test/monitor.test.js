@@ -11,15 +11,34 @@ import {
   getRescanIntervalMinutes,
   markAlertsDelivered,
   resolveCineplexApiKey,
-  shouldSendSeatAlert
+  shouldSendSeatAlert,
+  validateConfig
 } from "../monitor.js";
 
 const config = {
   movie: { filmId: 37617, requiredExperienceTypes: ["IMAX", "70mm"], posterUrl: "https://example.com/poster.jpg" },
   theatre: { id: 9406, name: "Cinéma Banque Scotia Montréal", timezone: "America/Toronto" },
   seats: { preferredRows: ["G", "H", "I", "J"], minimumNumber: 9, maximumNumber: 25, minimumAdjacent: 2, bestAdjacent: 3, allowedTypes: ["Standard"] },
-  monitoring: { hotRescanMinutes: 30, warmRescanMinutes: 30, coldRescanMinutes: 30 }
+  monitoring: {
+    hotRescanMinutes: 30,
+    warmRescanMinutes: 30,
+    coldRescanMinutes: 30,
+    stateFile: ".monitor-cache/monitor.state.json",
+    logFile: ".monitor-cache/monitor.log"
+  },
+  notifications: { discord: { enabled: true } },
+  api: { theatricalBaseUrl: "https://example.com/theatrical", ticketingBaseUrl: "https://example.com/ticketing" }
 };
+
+test("configuration validation rejects unsafe or inconsistent values", () => {
+  assert.doesNotThrow(() => validateConfig(config));
+  assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, maximumNumber: 8 } }), /maximumNumber/);
+  assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, bestAdjacent: 1 } }), /bestAdjacent/);
+  assert.throws(() => validateConfig({ ...config, theatre: { ...config.theatre, timezone: "Not\/A-Timezone" } }), /Invalid theatre.timezone/);
+  assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, timeoutSeconds: 0 } }), /timeout/);
+  assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 2.5 } }), /positive integer/);
+  assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "http:\/\/example.com" } }), /valid HTTPS URL/);
+});
 
 test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
   const payload = [{ theatreId: 9406, dates: [{ movies: [{ id: 37617, experiences: [

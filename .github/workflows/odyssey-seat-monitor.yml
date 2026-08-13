@@ -10,7 +10,7 @@ on:
 
 concurrency:
   group: odyssey-seat-monitor
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   check:
