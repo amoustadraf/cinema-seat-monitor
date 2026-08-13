@@ -1,4 +1,5 @@
 .env
+LOCAL_REFERENCE.md
 .monitor-cache/
 monitor.state.json
 monitor.log
