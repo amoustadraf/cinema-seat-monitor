@@ -54,7 +54,13 @@ jobs:
           CINEPLEX_API_KEY: ${{ secrets.CINEPLEX_API_KEY }}
           ODYSSEY_STATE_FILE: .monitor-cache/monitor.state.json
           ODYSSEY_LOG_FILE: .monitor-cache/monitor.log
-        run: npm run check
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            npm run check
+          else
+            npm run check:now
+          fi
 
       - name: Upload diagnostics on failure
         if: failure()

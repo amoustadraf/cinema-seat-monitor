@@ -53,7 +53,7 @@ npm run notify-test
 
 The workflow runs every 30 minutes on GitHub's servers, so the computer that created this repository can be off. GitHub's scheduler may occasionally start a run late.
 
-The first real run scans every currently listed IMAX 70mm date and time. Later runs always rediscover showtimes and immediately inspect newly added ones. Monitor state is kept in the GitHub Actions cache to prevent duplicate alerts.
+Push-triggered and manually dispatched runs force-scan every currently listed IMAX 70mm date and time, which verifies deployments end to end. Scheduled runs always rediscover showtimes and scan every showtime that is due. Monitor state is kept in the GitHub Actions cache to prevent duplicate alerts.
 
 The included workflow runs every 30 minutes. A public repository can use standard GitHub-hosted runners without consuming private-repository Actions minutes. If this repository is private, check the account's Actions allowance and reduce the cron frequency if needed.
 
