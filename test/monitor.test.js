@@ -9,6 +9,7 @@ import {
   extractPreferredAvailableSeats,
   findAdjacentGroups,
   getRescanIntervalMinutes,
+  resolveCineplexApiKey,
   shouldSendSeatAlert
 } from "../monitor.js";
 
@@ -35,6 +36,20 @@ test("ignores malformed sessions without a start time", () => {
     sessions: [{ vistaSessionId: 123, isShowtimeEnabledOnline: true }]
   }] }] }] }];
   assert.deepEqual(discoverTargetShowtimes(payload, config), []);
+});
+
+test("ignores malformed sessions with an invalid start time", () => {
+  const payload = [{ theatreId: 9406, dates: [{ movies: [{ id: 37617, experiences: [{
+    experienceTypes: ["IMAX", "70mm"],
+    sessions: [{ vistaSessionId: 123, showStartDateTime: "not-a-date", isShowtimeEnabledOnline: true }]
+  }] }] }] }];
+  assert.deepEqual(discoverTargetShowtimes(payload, config), []);
+});
+
+test("Cineplex API key comes from the configured environment variable", () => {
+  const apiConfig = { api: { subscriptionKeyEnvVar: "CINEPLEX_API_KEY" } };
+  assert.equal(resolveCineplexApiKey(apiConfig, { CINEPLEX_API_KEY: "from-environment" }), "from-environment");
+  assert.throws(() => resolveCineplexApiKey(apiConfig, {}), /CINEPLEX_API_KEY is required/);
 });
 
 test("filters preferred standard seats and finds adjacent runs", () => {
@@ -115,7 +130,7 @@ test("duplicate seat definitions do not create false adjacency", () => {
   ]);
 });
 
-test("rescan cadence prioritizes showtimes with promising seats", () => {
+test("rescan cadence checks every showtime every 30 minutes", () => {
   assert.equal(getRescanIntervalMinutes({ qualifyingGroups: [{ row: "G" }] }, config.monitoring), 30);
   assert.equal(getRescanIntervalMinutes({ availablePreferredSeats: ["G9"] }, config.monitoring), 30);
   assert.equal(getRescanIntervalMinutes({}, config.monitoring), 30);

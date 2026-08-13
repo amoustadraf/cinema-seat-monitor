@@ -86,9 +86,9 @@ function validateConfig(config) {
   }
 }
 
-function cineplexApiKey(config) {
+export function resolveCineplexApiKey(config, environment = process.env) {
   const environmentVariable = config.api.subscriptionKeyEnvVar || "CINEPLEX_API_KEY";
-  const key = process.env[environmentVariable] || config.api.subscriptionKey || "";
+  const key = environment[environmentVariable] || config.api.subscriptionKey || "";
   if (!key) throw new Error(`${environmentVariable} is required for Cineplex API requests.`);
   return key;
 }
@@ -121,7 +121,7 @@ async function fetchJson(config, url) {
       headers: {
         "Accept": "application/json",
         "Accept-Language": API_LANGUAGE,
-        "Ocp-Apim-Subscription-Key": cineplexApiKey(config),
+        "Ocp-Apim-Subscription-Key": resolveCineplexApiKey(config),
         "User-Agent": "odyssey-cinema-monitor/1.0 (personal availability monitor)"
       },
       signal: controller.signal
@@ -172,6 +172,7 @@ export function discoverTargetShowtimes(payload, config) {
           if (!required.every((value) => types.includes(value))) continue;
           for (const session of experience.sessions || []) {
             if (!session.vistaSessionId || !session.showStartDateTime || session.isInThePast || session.isShowtimeEnabledOnline === false) continue;
+            if (!Number.isFinite(new Date(session.showStartDateTimeUtc || session.showStartDateTime).getTime())) continue;
             const showtimeId = String(session.vistaSessionId);
             found.set(showtimeId, {
               showtimeId,
@@ -188,7 +189,9 @@ export function discoverTargetShowtimes(payload, config) {
       }
     }
   }
-  return [...found.values()].sort((a, b) => a.startAt.localeCompare(b.startAt));
+  return [...found.values()].sort((a, b) =>
+    new Date(a.startAtUtc || a.startAt).getTime() - new Date(b.startAtUtc || b.startAt).getTime()
+  );
 }
 
 function allSeatDefinitions(layout) {
