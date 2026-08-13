@@ -16,6 +16,8 @@ The project is intended to support additional films and cinemas through configur
 
 Every newly listed IMAX 70mm showtime is scanned immediately. Every existing showtime, including a fully occupied preferred section, is rescanned every 30 minutes so short-lived refunds and newly released seat blocks can be detected.
 
+Until the configured September 16 listing horizon has passed, an empty target-showtime response is treated as a monitor failure and reported to Discord. This prevents an API or filtering break from appearing as a quiet successful scan.
+
 ## Secrets and Discord setup
 
 The monitor needs a Discord webhook and the current Cineplex frontend API subscription key. Keep both values out of committed files.

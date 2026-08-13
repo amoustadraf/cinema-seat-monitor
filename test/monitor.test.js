@@ -23,6 +23,7 @@ const config = {
     hotRescanMinutes: 30,
     warmRescanMinutes: 30,
     coldRescanMinutes: 30,
+    expectShowtimesUntil: "2026-09-17T03:59:59Z",
     stateFile: ".monitor-cache/monitor.state.json",
     logFile: ".monitor-cache/monitor.log"
   },
@@ -38,6 +39,7 @@ test("configuration validation rejects unsafe or inconsistent values", () => {
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, timeoutSeconds: 0 } }), /timeout/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 2.5 } }), /positive integer/);
   assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "http:\/\/example.com" } }), /valid HTTPS URL/);
+  assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, expectShowtimesUntil: "not-a-date" } }), /valid date-time/);
 });
 
 test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {

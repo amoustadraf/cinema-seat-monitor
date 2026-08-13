@@ -78,6 +78,7 @@ export function validateConfig(config) {
     [config?.monitoring?.hotRescanMinutes, "monitoring.hotRescanMinutes"],
     [config?.monitoring?.warmRescanMinutes, "monitoring.warmRescanMinutes"],
     [config?.monitoring?.coldRescanMinutes, "monitoring.coldRescanMinutes"],
+    [config?.monitoring?.expectShowtimesUntil, "monitoring.expectShowtimesUntil"],
     [config?.monitoring?.stateFile, "monitoring.stateFile"],
     [config?.monitoring?.logFile, "monitoring.logFile"],
     [config?.notifications?.discord, "notifications.discord"],
@@ -118,6 +119,9 @@ export function validateConfig(config) {
     new Intl.DateTimeFormat("en-CA", { timeZone: config.theatre.timezone }).format();
   } catch {
     throw new Error(`Invalid theatre.timezone: ${config.theatre.timezone}`);
+  }
+  if (!Number.isFinite(new Date(config.monitoring.expectShowtimesUntil).getTime())) {
+    throw new Error("monitoring.expectShowtimesUntil must be a valid date-time.");
   }
   for (const [value, label] of [
     [config.api.theatricalBaseUrl, "api.theatricalBaseUrl"],
@@ -530,6 +534,9 @@ async function main() {
   state.sessions ||= {};
   const checkedAt = new Date().toISOString();
   const discovered = discoverTargetShowtimes(await fetchShowtimes(config), config);
+  if (discovered.length === 0 && Date.now() < new Date(config.monitoring.expectShowtimesUntil).getTime()) {
+    throw new Error(`Cineplex returned no target showtimes before the expected listing deadline ${config.monitoring.expectShowtimesUntil}.`);
+  }
   const discoveredIds = new Set(discovered.map((session) => session.showtimeId));
   const newShowtimes = [];
   const alerts = [];

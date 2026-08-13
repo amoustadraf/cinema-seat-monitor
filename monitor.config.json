@@ -26,6 +26,7 @@
     "timeoutSeconds": 25,
     "retryAttempts": 3,
     "retryDelaySeconds": 4,
+    "expectShowtimesUntil": "2026-09-17T03:59:59Z",
     "stateFile": ".monitor-cache/monitor.state.json",
     "logFile": ".monitor-cache/monitor.log",
     "retainPastSessionsDays": 7
