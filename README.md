@@ -16,14 +16,15 @@ The project is intended to support additional films and cinemas through configur
 
 Every newly listed IMAX 70mm showtime is scanned immediately. Every existing showtime, including a fully occupied preferred section, is rescanned every 30 minutes so short-lived refunds and newly released seat blocks can be detected.
 
-## Discord setup
+## Secrets and Discord setup
 
-Only one Discord value is required:
+The monitor needs a Discord webhook and the current Cineplex frontend API subscription key. Keep both values out of committed files.
 
 1. In Discord, open the target channel's **Edit Channel → Integrations → Webhooks**.
 2. Create a webhook and copy its URL.
-3. Copy `.env.example` to `.env` for local use.
-4. Put the URL after `DISCORD_WEBHOOK_URL=`.
+3. In the browser's developer tools, inspect a normal Cineplex showtime or seat-preview request and copy its `Ocp-Apim-Subscription-Key` request-header value. Cineplex may rotate this public-frontend key over time.
+4. Copy `.env.example` to `.env` for local use.
+5. Put the values after `DISCORD_WEBHOOK_URL=` and `CINEPLEX_API_KEY=`.
 
 `DISCORD_MENTION` is optional. Use `<@USER_ID>` for a user or `<@&ROLE_ID>` for a role.
 

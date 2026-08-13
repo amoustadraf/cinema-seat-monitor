@@ -50,6 +50,7 @@ test("Cineplex API key comes from the configured environment variable", () => {
   const apiConfig = { api: { subscriptionKeyEnvVar: "CINEPLEX_API_KEY" } };
   assert.equal(resolveCineplexApiKey(apiConfig, { CINEPLEX_API_KEY: "from-environment" }), "from-environment");
   assert.throws(() => resolveCineplexApiKey(apiConfig, {}), /CINEPLEX_API_KEY is required/);
+  assert.throws(() => resolveCineplexApiKey({ api: { subscriptionKey: "legacy-inline-value" } }, {}), /CINEPLEX_API_KEY is required/);
 });
 
 test("filters preferred standard seats and finds adjacent runs", () => {

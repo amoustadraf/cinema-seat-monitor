@@ -88,7 +88,7 @@ function validateConfig(config) {
 
 export function resolveCineplexApiKey(config, environment = process.env) {
   const environmentVariable = config.api.subscriptionKeyEnvVar || "CINEPLEX_API_KEY";
-  const key = environment[environmentVariable] || config.api.subscriptionKey || "";
+  const key = environment[environmentVariable] || "";
   if (!key) throw new Error(`${environmentVariable} is required for Cineplex API requests.`);
   return key;
 }
