@@ -159,7 +159,7 @@ export function buildSeatPreviewUrl(theatreId, showtimeId) {
   return `https://www.cineplex.com/ticketing/preview?theatreId=${encodeURIComponent(theatreId)}&showtimeId=${encodeURIComponent(showtimeId)}&dbox=false`;
 }
 
-export function discoverTargetShowtimes(payload, config) {
+export function discoverTargetShowtimes(payload, config, now = Date.now()) {
   const required = config.movie.requiredExperienceTypes.map((value) => value.toLowerCase());
   const found = new Map();
   for (const theatre of Array.isArray(payload) ? payload : []) {
@@ -172,7 +172,8 @@ export function discoverTargetShowtimes(payload, config) {
           if (!required.every((value) => types.includes(value))) continue;
           for (const session of experience.sessions || []) {
             if (!session.vistaSessionId || !session.showStartDateTime || session.isInThePast || session.isShowtimeEnabledOnline === false) continue;
-            if (!Number.isFinite(new Date(session.showStartDateTimeUtc || session.showStartDateTime).getTime())) continue;
+            const startsAt = new Date(session.showStartDateTimeUtc || session.showStartDateTime).getTime();
+            if (!Number.isFinite(startsAt) || startsAt <= now) continue;
             const showtimeId = String(session.vistaSessionId);
             found.set(showtimeId, {
               showtimeId,
@@ -558,8 +559,19 @@ async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
+  main().catch(async (error) => {
     console.error(error.stack || error.message || error);
+    try {
+      const config = await readJson(CONFIG_FILE, null);
+      if (config?.monitoring?.logFile) {
+        await appendLog(config, "error", "Monitor failed", {
+          error: error.message || String(error),
+          stack: error.stack || undefined
+        });
+      }
+    } catch (loggingError) {
+      console.error(`Could not write failure diagnostics: ${loggingError.message}`);
+    }
     process.exitCode = 1;
   });
 }

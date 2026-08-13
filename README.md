@@ -41,6 +41,8 @@ If a workflow run fails, Discord receives one red failure alert with the branch,
 
 ## Run locally
 
+Node.js 20 or newer is required. GitHub Actions currently runs the monitor on Node.js 24.
+
 ```powershell
 npm test
 npm run dry-run

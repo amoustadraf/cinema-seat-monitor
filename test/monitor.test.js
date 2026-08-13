@@ -25,7 +25,7 @@ test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
     { experienceTypes: ["IMAX", "70mm"], sessions: [{ vistaSessionId: 123, showStartDateTime: "2026-09-01T19:00:00", isShowtimeEnabledOnline: true }] },
     { experienceTypes: ["70mm"], sessions: [{ vistaSessionId: 456, showStartDateTime: "2026-09-01T20:00:00" }] }
   ] }] }] }];
-  const result = discoverTargetShowtimes(payload, config);
+  const result = discoverTargetShowtimes(payload, config, Date.parse("2026-08-01T00:00:00Z"));
   assert.deepEqual(result.map((item) => item.showtimeId), ["123"]);
   assert.match(result[0].seatMapUrl, /showtimeId=123/);
 });
@@ -35,7 +35,7 @@ test("ignores malformed sessions without a start time", () => {
     experienceTypes: ["IMAX", "70mm"],
     sessions: [{ vistaSessionId: 123, isShowtimeEnabledOnline: true }]
   }] }] }] }];
-  assert.deepEqual(discoverTargetShowtimes(payload, config), []);
+  assert.deepEqual(discoverTargetShowtimes(payload, config, Date.parse("2026-08-01T00:00:00Z")), []);
 });
 
 test("ignores malformed sessions with an invalid start time", () => {
@@ -43,7 +43,20 @@ test("ignores malformed sessions with an invalid start time", () => {
     experienceTypes: ["IMAX", "70mm"],
     sessions: [{ vistaSessionId: 123, showStartDateTime: "not-a-date", isShowtimeEnabledOnline: true }]
   }] }] }] }];
-  assert.deepEqual(discoverTargetShowtimes(payload, config), []);
+  assert.deepEqual(discoverTargetShowtimes(payload, config, Date.parse("2026-08-01T00:00:00Z")), []);
+});
+
+test("ignores sessions whose start time has already passed", () => {
+  const payload = [{ theatreId: 9406, dates: [{ movies: [{ id: 37617, experiences: [{
+    experienceTypes: ["IMAX", "70mm"],
+    sessions: [{
+      vistaSessionId: 123,
+      showStartDateTime: "2026-08-12T22:15:00",
+      showStartDateTimeUtc: "2026-08-13T02:15:00Z",
+      isShowtimeEnabledOnline: true
+    }]
+  }] }] }] }];
+  assert.deepEqual(discoverTargetShowtimes(payload, config, Date.parse("2026-08-13T03:00:00Z")), []);
 });
 
 test("Cineplex API key comes from the configured environment variable", () => {
