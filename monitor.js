@@ -253,9 +253,18 @@ function groupSignature(groups) {
   return groups.map((group) => `${group.row}:${group.from}-${group.to}`).sort().join("|");
 }
 
-export function shouldSendSeatAlert(previousSignature, groups) {
+export function shouldSendSeatAlert(previousAlertSignature, groups) {
   const signature = groupSignature(groups);
-  return Boolean(signature && signature !== (previousSignature || ""));
+  return Boolean(signature && signature !== (previousAlertSignature || ""));
+}
+
+export function markAlertsDelivered(state, alerts, deliveredAt = new Date().toISOString()) {
+  for (const alert of alerts) {
+    const sessionState = state.sessions[alert.session.showtimeId];
+    if (!sessionState) continue;
+    sessionState.lastAlertAt = deliveredAt;
+    sessionState.lastAlertSignature = sessionState.qualifyingSignature;
+  }
 }
 
 function minutesSince(iso) {
@@ -501,7 +510,7 @@ async function main() {
 
     const result = await checkSeats(config, session, layoutCache);
     const signature = groupSignature(result.groups);
-    const previousSignature = previous?.qualifyingSignature || "";
+    const previousAlertSignature = previous?.lastAlertSignature || "";
     Object.assign(next, {
       lastSeatCheckAt: checkedAt,
       lastSeatCheckStatus: result.isPostShowtime ? "past" : result.isSoldOut ? "sold_out" : "ok",
@@ -509,12 +518,11 @@ async function main() {
       qualifyingGroups: result.groups,
       qualifyingSignature: signature
     });
+    if (!signature) next.lastAlertSignature = "";
 
     console.log(`${session.startAt}: ${result.preferredSeats.length} preferred seat(s); ${result.groups.length} qualifying group(s).`);
-    if (shouldSendSeatAlert(previousSignature, result.groups)) {
+    if (shouldSendSeatAlert(previousAlertSignature, result.groups)) {
       alerts.push({ session: next, groups: result.groups });
-      next.lastAlertAt = checkedAt;
-      next.lastAlertSignature = signature;
     }
     state.sessions[session.showtimeId] = next;
   }
@@ -545,17 +553,25 @@ async function main() {
     return;
   }
 
+  await writeJson(stateFile, state);
   const settings = discordSettings(config);
   const discordBatches = buildDiscordTicketBatches(config, alerts, settings.mention);
+  let deliveredAlerts = 0;
   for (let index = 0; index < discordBatches.length; index += 1) {
-    await withRetries(config, `Discord alert batch ${index + 1}/${discordBatches.length}`, () =>
+    const delivered = await withRetries(config, `Discord alert batch ${index + 1}/${discordBatches.length}`, () =>
       sendDiscord(config, discordBatches[index])
     );
+    if (!delivered) continue;
+    const deliveredBatchAlerts = alerts.slice(index * 10, index * 10 + 10);
+    markAlertsDelivered(state, deliveredBatchAlerts);
+    deliveredAlerts += deliveredBatchAlerts.length;
+    await writeJson(stateFile, state);
   }
 
+  state.lastResult.alertsSent = deliveredAlerts;
   await writeJson(stateFile, state);
   await appendLog(config, "info", "Monitor completed", state.lastResult);
-  console.log(`Completed. ${alerts.length} Discord alert(s) sent.`);
+  console.log(`Completed. ${deliveredAlerts} Discord alert(s) sent; ${alerts.length - deliveredAlerts} pending.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

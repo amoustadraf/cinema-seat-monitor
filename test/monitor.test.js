@@ -9,6 +9,7 @@ import {
   extractPreferredAvailableSeats,
   findAdjacentGroups,
   getRescanIntervalMinutes,
+  markAlertsDelivered,
   resolveCineplexApiKey,
   shouldSendSeatAlert
 } from "../monitor.js";
@@ -124,13 +125,24 @@ test("Discord failure notification links directly to the failed Actions run", ()
   assert.equal(payload.embeds[0].fields.find((field) => field.name === "Commit").value, "abcdef1");
 });
 
-test("seat alerts fire for new or reappearing groups and suppress unchanged groups", () => {
+test("seat alerts compare against successfully delivered notification state", () => {
   const groups = [{ row: "I", count: 3, from: 14, to: 16, labels: ["I14", "I15", "I16"] }];
   assert.equal(shouldSendSeatAlert("", groups), true);
   assert.equal(shouldSendSeatAlert("I:14-16", groups), false);
   assert.equal(shouldSendSeatAlert("I:14-15", groups), true);
   assert.equal(shouldSendSeatAlert("I:14-16", []), false);
   assert.equal(shouldSendSeatAlert("", groups), true);
+});
+
+test("successful Discord batches checkpoint only their delivered alert signatures", () => {
+  const state = { sessions: {
+    first: { qualifyingSignature: "G:9-11" },
+    second: { qualifyingSignature: "H:14-15" }
+  } };
+  markAlertsDelivered(state, [{ session: { showtimeId: "first" } }], "2026-08-13T12:00:00Z");
+  assert.equal(state.sessions.first.lastAlertSignature, "G:9-11");
+  assert.equal(state.sessions.first.lastAlertAt, "2026-08-13T12:00:00Z");
+  assert.equal(state.sessions.second.lastAlertSignature, undefined);
 });
 
 test("duplicate seat definitions do not create false adjacency", () => {
