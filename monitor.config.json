@@ -1,0 +1,45 @@
+{
+  "movie": {
+    "name": "The Odyssey: The IMAX Experience® in 70MM Film",
+    "filmId": 37617,
+    "pageUrl": "https://www.cineplex.com/movie/imax70-the-odyssey-the-imax-experience-in-7",
+    "posterUrl": "https://mediafiles.cineplex.com/Central/Film/Posters/38376_320_470.jpg",
+    "requiredExperienceTypes": ["IMAX", "70mm"]
+  },
+  "theatre": {
+    "id": 9406,
+    "name": "Cinéma Banque Scotia Montréal",
+    "timezone": "America/Toronto"
+  },
+  "seats": {
+    "preferredRows": ["G", "H", "I", "J"],
+    "minimumNumber": 9,
+    "maximumNumber": 25,
+    "minimumAdjacent": 2,
+    "bestAdjacent": 3,
+    "allowedTypes": ["Standard"]
+  },
+  "monitoring": {
+    "hotRescanMinutes": 30,
+    "warmRescanMinutes": 30,
+    "coldRescanMinutes": 360,
+    "timeoutSeconds": 25,
+    "retryAttempts": 3,
+    "retryDelaySeconds": 4,
+    "stateFile": ".monitor-cache/monitor.state.json",
+    "logFile": ".monitor-cache/monitor.log",
+    "retainPastSessionsDays": 7
+  },
+  "notifications": {
+    "discord": {
+      "enabled": true,
+      "webhookUrlEnvVar": "DISCORD_WEBHOOK_URL",
+      "mentionEnvVar": "DISCORD_MENTION"
+    }
+  },
+  "api": {
+    "theatricalBaseUrl": "https://apis.cineplex.com/prod/cpx/theatrical/api",
+    "ticketingBaseUrl": "https://apis.cineplex.com/prod/ticketing/api",
+    "subscriptionKey": "REDACTED"
+  }
+}

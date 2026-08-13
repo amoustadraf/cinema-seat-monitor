@@ -1,0 +1,6 @@
+.env
+.monitor-cache/
+monitor.state.json
+monitor.log
+node_modules/
+npm-debug.log*

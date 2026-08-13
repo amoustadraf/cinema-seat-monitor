@@ -1,0 +1,65 @@
+name: Odyssey IMAX 70mm Seat Monitor
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    # GitHub cron is UTC. Offset from the top of the hour to reduce queue delays.
+    - cron: "7,37 * * * *"
+
+concurrency:
+  group: odyssey-seat-monitor
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Restore monitor state
+        uses: actions/cache@v4
+        with:
+          path: .monitor-cache
+          key: odyssey-seat-state-${{ github.run_id }}
+          restore-keys: |
+            odyssey-seat-state-
+
+      - name: Run tests
+        run: npm test
+
+      - name: Send Discord connection test
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[discord-test]')
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_MENTION: ${{ vars.DISCORD_MENTION }}
+        run: npm run notify-test
+
+      - name: Run seat monitor
+        if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[discord-test]')
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_MENTION: ${{ vars.DISCORD_MENTION }}
+          ODYSSEY_STATE_FILE: .monitor-cache/monitor.state.json
+          ODYSSEY_LOG_FILE: .monitor-cache/monitor.log
+        run: npm run check
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odyssey-monitor-diagnostics
+          path: .monitor-cache
+          if-no-files-found: ignore
+          retention-days: 7
