@@ -106,6 +106,10 @@ export function validateConfig(config) {
   if (config.seats.maximumNumber < config.seats.minimumNumber) {
     throw new Error("seats.maximumNumber must be at least seats.minimumNumber.");
   }
+  const preferredSeatSpan = config.seats.maximumNumber - config.seats.minimumNumber + 1;
+  if (config.seats.minimumAdjacent > preferredSeatSpan || config.seats.bestAdjacent > preferredSeatSpan) {
+    throw new Error("Seat adjacency thresholds cannot exceed the configured preferred seat-number range.");
+  }
   if (!Number.isInteger(config.monitoring.retryAttempts ?? 3) || (config.monitoring.retryAttempts ?? 3) < 1) {
     throw new Error("monitoring.retryAttempts must be a positive integer.");
   }
@@ -114,6 +118,10 @@ export function validateConfig(config) {
     || (config.monitoring.timeoutSeconds ?? 25) <= 0
     || (config.monitoring.retryDelaySeconds ?? 4) < 0) {
     throw new Error("Monitoring timeout must be positive and retry delay cannot be negative.");
+  }
+  if (!Number.isInteger(config.monitoring.retainPastSessionsDays ?? 7)
+    || (config.monitoring.retainPastSessionsDays ?? 7) < 0) {
+    throw new Error("monitoring.retainPastSessionsDays must be a non-negative integer.");
   }
   try {
     new Intl.DateTimeFormat("en-CA", { timeZone: config.theatre.timezone }).format();
@@ -140,6 +148,12 @@ export function resolveCineplexApiKey(config, environment = process.env) {
   const key = environment[environmentVariable] || "";
   if (!key) throw new Error(`${environmentVariable} is required for Cineplex API requests.`);
   return key;
+}
+
+export function assertExpectedShowtimes(discovered, monitoring, now = Date.now()) {
+  if (discovered.length === 0 && now < new Date(monitoring.expectShowtimesUntil).getTime()) {
+    throw new Error(`Cineplex returned no target showtimes before the expected listing deadline ${monitoring.expectShowtimesUntil}.`);
+  }
 }
 
 function sleep(milliseconds) {
@@ -460,6 +474,21 @@ function discordSettings(config) {
   };
 }
 
+export function validateDiscordWebhookUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("DISCORD_WEBHOOK_URL must be a valid Discord HTTPS webhook URL.");
+  }
+  const allowedHosts = new Set(["discord.com", "ptb.discord.com", "canary.discord.com", "discordapp.com"]);
+  if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())
+    || !/^\/api\/webhooks\/\d+\/[^/]+\/?$/.test(url.pathname)) {
+    throw new Error("DISCORD_WEBHOOK_URL must be a valid Discord HTTPS webhook URL.");
+  }
+  return url;
+}
+
 async function sendDiscord(config, payload) {
   const settings = discordSettings(config);
   if (!settings.enabled) {
@@ -467,16 +496,23 @@ async function sendDiscord(config, payload) {
     return false;
   }
   if (!settings.webhookUrl) throw new Error("DISCORD_WEBHOOK_URL is required when Discord is enabled.");
-  const webhookEndpoint = new URL(settings.webhookUrl);
+  const webhookEndpoint = validateDiscordWebhookUrl(settings.webhookUrl);
   webhookEndpoint.searchParams.set("wait", "true");
-  const response = await fetch(webhookEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`Discord webhook failed: HTTP ${response.status} ${body.slice(0, 300)}`);
-  return true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), (config.monitoring.timeoutSeconds ?? 25) * 1000);
+  try {
+    const response = await fetch(webhookEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`Discord webhook failed: HTTP ${response.status} ${body.slice(0, 300)}`);
+    return true;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchShowtimes(config) {
@@ -534,9 +570,7 @@ async function main() {
   state.sessions ||= {};
   const checkedAt = new Date().toISOString();
   const discovered = discoverTargetShowtimes(await fetchShowtimes(config), config);
-  if (discovered.length === 0 && Date.now() < new Date(config.monitoring.expectShowtimesUntil).getTime()) {
-    throw new Error(`Cineplex returned no target showtimes before the expected listing deadline ${config.monitoring.expectShowtimesUntil}.`);
-  }
+  assertExpectedShowtimes(discovered, config.monitoring);
   const discoveredIds = new Set(discovered.map((session) => session.showtimeId));
   const newShowtimes = [];
   const alerts = [];

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  assertExpectedShowtimes,
   buildDiscordFailurePayload,
   buildDiscordTicketPayload,
   buildDiscordTicketBatches,
@@ -12,7 +13,8 @@ import {
   markAlertsDelivered,
   resolveCineplexApiKey,
   shouldSendSeatAlert,
-  validateConfig
+  validateConfig,
+  validateDiscordWebhookUrl
 } from "../monitor.js";
 
 const config = {
@@ -40,6 +42,26 @@ test("configuration validation rejects unsafe or inconsistent values", () => {
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 2.5 } }), /positive integer/);
   assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "http:\/\/example.com" } }), /valid HTTPS URL/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, expectShowtimesUntil: "not-a-date" } }), /valid date-time/);
+  assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, retainPastSessionsDays: -1 } }), /non-negative integer/);
+  assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 18, bestAdjacent: 18 } }), /cannot exceed/);
+});
+
+test("expected listing horizon turns a suspicious empty discovery into a failure", () => {
+  assert.throws(
+    () => assertExpectedShowtimes([], config.monitoring, Date.parse("2026-08-13T12:00:00Z")),
+    /no target showtimes/
+  );
+  assert.doesNotThrow(() => assertExpectedShowtimes([{ showtimeId: "123" }], config.monitoring, Date.parse("2026-08-13T12:00:00Z")));
+  assert.doesNotThrow(() => assertExpectedShowtimes([], config.monitoring, Date.parse("2026-09-17T04:00:00Z")));
+});
+
+test("Discord webhook validation accepts Discord and rejects unrelated destinations", () => {
+  assert.equal(
+    validateDiscordWebhookUrl("https://discord.com/api/webhooks/123456/token-value").hostname,
+    "discord.com"
+  );
+  assert.throws(() => validateDiscordWebhookUrl("https://example.com/api/webhooks/123456/token-value"), /valid Discord HTTPS/);
+  assert.throws(() => validateDiscordWebhookUrl("http://discord.com/api/webhooks/123456/token-value"), /valid Discord HTTPS/);
 });
 
 test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {

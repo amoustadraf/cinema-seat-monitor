@@ -76,9 +76,16 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
-      - name: Notify Discord on failure
-        if: failure()
-        continue-on-error: true
+  notify-failure:
+    name: Notify Discord on failure
+    needs: check
+    if: always() && needs.check.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+
+    steps:
+      - name: Send failure alert
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_MENTION: ${{ vars.DISCORD_MENTION }}
@@ -86,7 +93,6 @@ jobs:
           WORKFLOW_NAME: ${{ github.workflow }}
           BRANCH_NAME: ${{ github.ref_name }}
           SHORT_SHA: ${{ github.sha }}
-        shell: bash
         run: |
           payload=$(jq -n \
             --arg mention "$DISCORD_MENTION" \
