@@ -8,14 +8,15 @@ import {
   discoverTargetShowtimes,
   extractPreferredAvailableSeats,
   findAdjacentGroups,
-  getRescanIntervalMinutes
+  getRescanIntervalMinutes,
+  shouldSendSeatAlert
 } from "../monitor.js";
 
 const config = {
   movie: { filmId: 37617, requiredExperienceTypes: ["IMAX", "70mm"], posterUrl: "https://example.com/poster.jpg" },
   theatre: { id: 9406, name: "Cinéma Banque Scotia Montréal", timezone: "America/Toronto" },
   seats: { preferredRows: ["G", "H", "I", "J"], minimumNumber: 9, maximumNumber: 25, minimumAdjacent: 2, bestAdjacent: 3, allowedTypes: ["Standard"] },
-  monitoring: { hotRescanMinutes: 10, warmRescanMinutes: 30, coldRescanMinutes: 360 }
+  monitoring: { hotRescanMinutes: 30, warmRescanMinutes: 30, coldRescanMinutes: 360 }
 };
 
 test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
@@ -26,6 +27,14 @@ test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
   const result = discoverTargetShowtimes(payload, config);
   assert.deepEqual(result.map((item) => item.showtimeId), ["123"]);
   assert.match(result[0].seatMapUrl, /showtimeId=123/);
+});
+
+test("ignores malformed sessions without a start time", () => {
+  const payload = [{ theatreId: 9406, dates: [{ movies: [{ id: 37617, experiences: [{
+    experienceTypes: ["IMAX", "70mm"],
+    sessions: [{ vistaSessionId: 123, isShowtimeEnabledOnline: true }]
+  }] }] }] }];
+  assert.deepEqual(discoverTargetShowtimes(payload, config), []);
 });
 
 test("filters preferred standard seats and finds adjacent runs", () => {
@@ -86,8 +95,28 @@ test("Discord failure notification links directly to the failed Actions run", ()
   assert.equal(payload.embeds[0].fields.find((field) => field.name === "Commit").value, "abcdef1");
 });
 
+test("seat alerts fire for new or reappearing groups and suppress unchanged groups", () => {
+  const groups = [{ row: "I", count: 3, from: 14, to: 16, labels: ["I14", "I15", "I16"] }];
+  assert.equal(shouldSendSeatAlert("", groups), true);
+  assert.equal(shouldSendSeatAlert("I:14-16", groups), false);
+  assert.equal(shouldSendSeatAlert("I:14-15", groups), true);
+  assert.equal(shouldSendSeatAlert("I:14-16", []), false);
+  assert.equal(shouldSendSeatAlert("", groups), true);
+});
+
+test("duplicate seat definitions do not create false adjacency", () => {
+  const seats = [
+    { row: "G", number: 9, label: "G9" },
+    { row: "G", number: 9, label: "G9" },
+    { row: "G", number: 10, label: "G10" }
+  ];
+  assert.deepEqual(findAdjacentGroups(seats, 2), [
+    { row: "G", count: 2, from: 9, to: 10, labels: ["G9", "G10"] }
+  ]);
+});
+
 test("rescan cadence prioritizes showtimes with promising seats", () => {
-  assert.equal(getRescanIntervalMinutes({ qualifyingGroups: [{ row: "G" }] }, config.monitoring), 10);
+  assert.equal(getRescanIntervalMinutes({ qualifyingGroups: [{ row: "G" }] }, config.monitoring), 30);
   assert.equal(getRescanIntervalMinutes({ availablePreferredSeats: ["G9"] }, config.monitoring), 30);
   assert.equal(getRescanIntervalMinutes({}, config.monitoring), 360);
 });

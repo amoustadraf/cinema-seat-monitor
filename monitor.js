@@ -65,11 +65,15 @@ function resolveConfiguredPath(configPath, environmentVariable) {
 
 function validateConfig(config) {
   const required = [
-    [config.movie?.filmId, "movie.filmId"],
-    [config.theatre?.id, "theatre.id"],
-    [config.seats?.preferredRows?.length, "seats.preferredRows"],
-    [config.seats?.minimumAdjacent, "seats.minimumAdjacent"],
-    [config.api?.subscriptionKey, "api.subscriptionKey"]
+    [config?.movie?.filmId, "movie.filmId"],
+    [config?.movie?.requiredExperienceTypes?.length, "movie.requiredExperienceTypes"],
+    [config?.theatre?.id, "theatre.id"],
+    [config?.theatre?.timezone, "theatre.timezone"],
+    [config?.seats?.preferredRows?.length, "seats.preferredRows"],
+    [config?.seats?.allowedTypes?.length, "seats.allowedTypes"],
+    [config?.seats?.minimumAdjacent, "seats.minimumAdjacent"],
+    [config?.api?.theatricalBaseUrl, "api.theatricalBaseUrl"],
+    [config?.api?.ticketingBaseUrl, "api.ticketingBaseUrl"]
   ];
   for (const [value, label] of required) {
     if (!value) throw new Error(`Missing required configuration: ${label}`);
@@ -77,6 +81,16 @@ function validateConfig(config) {
   if (config.seats.bestAdjacent < config.seats.minimumAdjacent) {
     throw new Error("seats.bestAdjacent must be at least seats.minimumAdjacent.");
   }
+  if ((config.monitoring.retryAttempts ?? 3) < 1) {
+    throw new Error("monitoring.retryAttempts must be at least 1.");
+  }
+}
+
+function cineplexApiKey(config) {
+  const environmentVariable = config.api.subscriptionKeyEnvVar || "CINEPLEX_API_KEY";
+  const key = process.env[environmentVariable] || config.api.subscriptionKey || "";
+  if (!key) throw new Error(`${environmentVariable} is required for Cineplex API requests.`);
+  return key;
 }
 
 function sleep(milliseconds) {
@@ -107,7 +121,7 @@ async function fetchJson(config, url) {
       headers: {
         "Accept": "application/json",
         "Accept-Language": API_LANGUAGE,
-        "Ocp-Apim-Subscription-Key": process.env.CINEPLEX_API_KEY || config.api.subscriptionKey,
+        "Ocp-Apim-Subscription-Key": cineplexApiKey(config),
         "User-Agent": "odyssey-cinema-monitor/1.0 (personal availability monitor)"
       },
       signal: controller.signal
@@ -157,7 +171,7 @@ export function discoverTargetShowtimes(payload, config) {
           const types = (experience.experienceTypes || []).map((value) => value.toLowerCase());
           if (!required.every((value) => types.includes(value))) continue;
           for (const session of experience.sessions || []) {
-            if (!session.vistaSessionId || session.isInThePast || session.isShowtimeEnabledOnline === false) continue;
+            if (!session.vistaSessionId || !session.showStartDateTime || session.isInThePast || session.isShowtimeEnabledOnline === false) continue;
             const showtimeId = String(session.vistaSessionId);
             found.set(showtimeId, {
               showtimeId,
@@ -204,7 +218,7 @@ export function findAdjacentGroups(seats, minimumAdjacent) {
   const rows = new Map();
   for (const seat of seats) {
     if (!rows.has(seat.row)) rows.set(seat.row, []);
-    rows.get(seat.row).push(seat);
+    if (!rows.get(seat.row).some((existing) => existing.number === seat.number)) rows.get(seat.row).push(seat);
   }
   const groups = [];
   for (const [row, rowSeats] of rows) {
@@ -233,6 +247,11 @@ export function findAdjacentGroups(seats, minimumAdjacent) {
 
 function groupSignature(groups) {
   return groups.map((group) => `${group.row}:${group.from}-${group.to}`).sort().join("|");
+}
+
+export function shouldSendSeatAlert(previousSignature, groups) {
+  const signature = groupSignature(groups);
+  return Boolean(signature && signature !== (previousSignature || ""));
 }
 
 function minutesSince(iso) {
@@ -488,7 +507,7 @@ async function main() {
     });
 
     console.log(`${session.startAt}: ${result.preferredSeats.length} preferred seat(s); ${result.groups.length} qualifying group(s).`);
-    if (signature && signature !== previousSignature) {
+    if (shouldSendSeatAlert(previousSignature, result.groups)) {
       alerts.push({ session: next, groups: result.groups });
       next.lastAlertAt = checkedAt;
       next.lastAlertSignature = signature;

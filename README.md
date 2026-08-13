@@ -31,7 +31,8 @@ For GitHub Actions:
 
 1. Open the GitHub repository's **Settings → Secrets and variables → Actions**.
 2. Create a repository secret named `DISCORD_WEBHOOK_URL`.
-3. Optionally create a repository variable named `DISCORD_MENTION`.
+3. Create a repository secret named `CINEPLEX_API_KEY`.
+4. Optionally create a repository variable named `DISCORD_MENTION`.
 
 The alert includes the exact adjacent seats, date, time, cinema, format, and a clickable direct link to the correct Cineplex seat-selection page.
 

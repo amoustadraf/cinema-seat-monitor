@@ -40,6 +40,6 @@
   "api": {
     "theatricalBaseUrl": "https://apis.cineplex.com/prod/cpx/theatrical/api",
     "ticketingBaseUrl": "https://apis.cineplex.com/prod/ticketing/api",
-    "subscriptionKey": "REDACTED"
+    "subscriptionKeyEnvVar": "CINEPLEX_API_KEY"
   }
 }

@@ -51,6 +51,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_MENTION: ${{ vars.DISCORD_MENTION }}
+          CINEPLEX_API_KEY: ${{ secrets.CINEPLEX_API_KEY }}
           ODYSSEY_STATE_FILE: .monitor-cache/monitor.state.json
           ODYSSEY_LOG_FILE: .monitor-cache/monitor.log
         run: npm run check
@@ -70,4 +71,37 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_MENTION: ${{ vars.DISCORD_MENTION }}
-        run: npm run notify-failure
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          SHORT_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          payload=$(jq -n \
+            --arg mention "$DISCORD_MENTION" \
+            --arg run_url "$RUN_URL" \
+            --arg workflow "$WORKFLOW_NAME" \
+            --arg branch "$BRANCH_NAME" \
+            --arg commit "${SHORT_SHA:0:7}" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{
+              content: (($mention + "\n🚨 **Odyssey monitor needs attention.**") | ltrimstr("\n")),
+              allowed_mentions: {parse: ["users", "roles"]},
+              embeds: [{
+                title: "Odyssey monitor failed",
+                url: $run_url,
+                description: ("The scheduled cinema scan did not finish successfully.\n\n[**Open the failed GitHub Actions run →**](" + $run_url + ")"),
+                color: 15158332,
+                fields: [
+                  {name: "Workflow", value: $workflow, inline: true},
+                  {name: "Branch", value: $branch, inline: true},
+                  {name: "Commit", value: $commit, inline: true},
+                  {name: "Repository", value: $repository, inline: false}
+                ],
+                footer: {text: "The next scheduled run will try again automatically."}
+              }]
+            }')
+          curl --fail-with-body --silent --show-error \
+            -H "Content-Type: application/json" \
+            --data "$payload" \
+            "${DISCORD_WEBHOOK_URL}?wait=true"
