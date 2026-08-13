@@ -35,6 +35,8 @@ For GitHub Actions:
 
 The alert includes the exact adjacent seats, date, time, cinema, format, and a clickable direct link to the correct Cineplex seat-selection page.
 
+If a workflow run fails, Discord receives one red failure alert with the branch, commit, and a direct link to the failed GitHub Actions run. The next scheduled run retries automatically. A broken Discord webhook cannot report its own failure, so GitHub's Actions status remains the fallback.
+
 ## Run locally
 
 ```powershell

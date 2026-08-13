@@ -9,6 +9,7 @@
     "check:now": "node monitor.js --force",
     "dry-run": "node monitor.js --force --dry-run",
     "notify-test": "node monitor.js --notify-test",
+    "notify-failure": "node monitor.js --notify-failure",
     "test": "node --test"
   },
   "engines": {

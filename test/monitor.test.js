@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildDiscordFailurePayload,
   buildDiscordTicketPayload,
   buildDiscordTicketBatches,
   buildSeatPreviewUrl,
@@ -67,6 +68,22 @@ test("Discord notifications batch large ticket drops into at most ten embeds", (
   assert.match(batches[0].content, /<@123>/);
   assert.doesNotMatch(batches[1].content, /<@123>/);
   assert.equal(batches[1].embeds[1].url, alerts[11].session.seatMapUrl);
+});
+
+test("Discord failure notification links directly to the failed Actions run", () => {
+  const payload = buildDiscordFailurePayload(config, {
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_REPOSITORY: "amoustadraf/cinema-seat-monitor",
+    GITHUB_RUN_ID: "123456",
+    GITHUB_WORKFLOW: "Odyssey IMAX 70mm Seat Monitor",
+    GITHUB_REF_NAME: "main",
+    GITHUB_SHA: "abcdef1234567890"
+  }, "<@123>");
+  assert.match(payload.content, /<@123>/);
+  assert.equal(payload.embeds[0].url, "https://github.com/amoustadraf/cinema-seat-monitor/actions/runs/123456");
+  assert.match(payload.embeds[0].description, /failed GitHub Actions run/);
+  assert.equal(payload.embeds[0].color, 0xE74C3C);
+  assert.equal(payload.embeds[0].fields.find((field) => field.name === "Commit").value, "abcdef1");
 });
 
 test("rescan cadence prioritizes showtimes with promising seats", () => {

@@ -9,6 +9,7 @@ const args = new Set(process.argv.slice(2));
 const force = args.has("--force");
 const dryRun = args.has("--dry-run");
 const notifyTest = args.has("--notify-test");
+const notifyFailure = args.has("--notify-failure");
 
 const emptyState = {
   version: 1,
@@ -323,6 +324,33 @@ export function buildDiscordTicketBatches(config, alerts, mention = "") {
   return batches;
 }
 
+export function buildDiscordFailurePayload(config, environment = process.env, mention = "") {
+  const repository = environment.GITHUB_REPOSITORY || "amoustadraf/cinema-seat-monitor";
+  const serverUrl = environment.GITHUB_SERVER_URL || "https://github.com";
+  const runId = environment.GITHUB_RUN_ID || "";
+  const runUrl = runId ? `${serverUrl}/${repository}/actions/runs/${runId}` : `${serverUrl}/${repository}/actions`;
+  const commit = (environment.GITHUB_SHA || "").slice(0, 7) || "Unknown";
+
+  return {
+    content: [mention.trim(), "🚨 **Odyssey monitor needs attention.**"].filter(Boolean).join("\n").slice(0, 2000),
+    allowed_mentions: { parse: ["users", "roles"] },
+    embeds: [{
+      title: "Odyssey monitor failed",
+      url: runUrl,
+      description: `The scheduled cinema scan did not finish successfully.\n\n[**Open the failed GitHub Actions run →**](${runUrl})`,
+      color: 0xE74C3C,
+      fields: [
+        { name: "Workflow", value: environment.GITHUB_WORKFLOW || "Odyssey IMAX 70mm Seat Monitor", inline: true },
+        { name: "Branch", value: environment.GITHUB_REF_NAME || "Unknown", inline: true },
+        { name: "Commit", value: commit, inline: true },
+        { name: "Repository", value: repository, inline: false }
+      ],
+      footer: { text: "The next scheduled run will try again automatically." },
+      timestamp: new Date().toISOString()
+    }]
+  };
+}
+
 function buildDiscordTestPayload(config) {
   const preview = buildSeatPreviewUrl(config.theatre.id, "SHOWTIME_ID");
   return {
@@ -410,6 +438,13 @@ async function main() {
   if (notifyTest) {
     await sendDiscord(config, buildDiscordTestPayload(config));
     console.log("Discord test notification sent.");
+    return;
+  }
+
+  if (notifyFailure) {
+    const settings = discordSettings(config);
+    await sendDiscord(config, buildDiscordFailurePayload(config, process.env, settings.mention));
+    console.log("Discord failure notification sent.");
     return;
   }
 

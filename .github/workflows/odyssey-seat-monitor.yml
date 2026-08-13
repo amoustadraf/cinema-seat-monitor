@@ -63,3 +63,11 @@ jobs:
           path: .monitor-cache
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Notify Discord on failure
+        if: failure()
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_MENTION: ${{ vars.DISCORD_MENTION }}
+        run: npm run notify-failure
