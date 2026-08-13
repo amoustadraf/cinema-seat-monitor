@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -29,7 +31,7 @@ jobs:
           node-version: "24"
 
       - name: Restore monitor state
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .monitor-cache
           key: odyssey-seat-state-${{ github.run_id }}
@@ -56,6 +58,13 @@ jobs:
           ODYSSEY_LOG_FILE: .monitor-cache/monitor.log
         shell: bash
         run: npm run check:now
+
+      - name: Save monitor state
+        if: always() && hashFiles('.monitor-cache/monitor.state.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .monitor-cache
+          key: odyssey-seat-state-${{ github.run_id }}
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -104,6 +113,7 @@ jobs:
               }]
             }')
           curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
             -H "Content-Type: application/json" \
             --data "$payload" \
             "${DISCORD_WEBHOOK_URL}?wait=true"
