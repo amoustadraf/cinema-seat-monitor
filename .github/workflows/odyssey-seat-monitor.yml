@@ -55,12 +55,7 @@ jobs:
           ODYSSEY_STATE_FILE: .monitor-cache/monitor.state.json
           ODYSSEY_LOG_FILE: .monitor-cache/monitor.log
         shell: bash
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
-            npm run check
-          else
-            npm run check:now
-          fi
+        run: npm run check:now
 
       - name: Upload diagnostics on failure
         if: failure()
