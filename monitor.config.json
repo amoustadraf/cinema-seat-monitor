@@ -22,7 +22,7 @@
   "monitoring": {
     "hotRescanMinutes": 30,
     "warmRescanMinutes": 30,
-    "coldRescanMinutes": 360,
+    "coldRescanMinutes": 30,
     "timeoutSeconds": 25,
     "retryAttempts": 3,
     "retryDelaySeconds": 4,

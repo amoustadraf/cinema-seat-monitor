@@ -14,7 +14,7 @@ The project is intended to support additional films and cinemas through configur
 - Wheelchair and companion positions are excluded
 - Date and time do not matter
 
-Every newly listed IMAX 70mm showtime is scanned immediately. Showtimes with a qualifying group or an individual preferred seat are rescanned every 30 minutes, and fully occupied preferred sections every 6 hours. This preserves a chance of detecting refunds while keeping Cineplex traffic modest.
+Every newly listed IMAX 70mm showtime is scanned immediately. Every existing showtime, including a fully occupied preferred section, is rescanned every 30 minutes so short-lived refunds and newly released seat blocks can be detected.
 
 ## Discord setup
 

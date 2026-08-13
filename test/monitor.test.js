@@ -16,7 +16,7 @@ const config = {
   movie: { filmId: 37617, requiredExperienceTypes: ["IMAX", "70mm"], posterUrl: "https://example.com/poster.jpg" },
   theatre: { id: 9406, name: "Cinéma Banque Scotia Montréal", timezone: "America/Toronto" },
   seats: { preferredRows: ["G", "H", "I", "J"], minimumNumber: 9, maximumNumber: 25, minimumAdjacent: 2, bestAdjacent: 3, allowedTypes: ["Standard"] },
-  monitoring: { hotRescanMinutes: 30, warmRescanMinutes: 30, coldRescanMinutes: 360 }
+  monitoring: { hotRescanMinutes: 30, warmRescanMinutes: 30, coldRescanMinutes: 30 }
 };
 
 test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
@@ -118,5 +118,5 @@ test("duplicate seat definitions do not create false adjacency", () => {
 test("rescan cadence prioritizes showtimes with promising seats", () => {
   assert.equal(getRescanIntervalMinutes({ qualifyingGroups: [{ row: "G" }] }, config.monitoring), 30);
   assert.equal(getRescanIntervalMinutes({ availablePreferredSeats: ["G9"] }, config.monitoring), 30);
-  assert.equal(getRescanIntervalMinutes({}, config.monitoring), 360);
+  assert.equal(getRescanIntervalMinutes({}, config.monitoring), 30);
 });
