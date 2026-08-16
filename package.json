@@ -2,7 +2,7 @@
   "name": "cinema-seat-monitor",
   "version": "1.0.0",
   "private": true,
-  "description": "Cinema seat availability monitor with Discord alerts; currently tracking The Odyssey IMAX 70mm",
+  "description": "Configurable Cineplex seat availability monitor with Discord alerts",
   "type": "module",
   "scripts": {
     "check": "node monitor.js",

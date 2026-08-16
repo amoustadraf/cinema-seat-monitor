@@ -1,10 +1,10 @@
-# Cinema Seat Monitor
+# Cineplex Seat Monitor
 
-A reusable GitHub Actions monitor for cinema showtimes and preferred-seat availability. The current configuration watches every upcoming **The Odyssey** IMAX 70mm showtime at **Cinéma Banque Scotia Montréal** because screenings are heavily sold out. It sends a Discord alert when it finds adjacent standard seats in the preferred middle section.
+A configurable GitHub Actions monitor for Cineplex showtimes and preferred-seat availability. It discovers every matching date and time, checks the live seat map, and sends a Discord alert with exact adjacent seats and a direct Cineplex purchase link.
 
-The project is intended to support additional films and cinemas through configuration in the future.
+The repository ships ready to run with **The Odyssey** IMAX 70mm at **Cinéma Banque Scotia Montréal**. Edit `monitor.config.json` to use one different Cineplex movie, theatre, format, or seat zone.
 
-## Seat rules
+## Included Odyssey watch
 
 - Cinema: Cinéma Banque Scotia Montréal (`9406`)
 - Format: IMAX and 70mm together
@@ -14,9 +14,40 @@ The project is intended to support additional films and cinemas through configur
 - Wheelchair and companion positions are excluded
 - Date and time do not matter
 
-Every newly listed IMAX 70mm showtime is scanned immediately. Every existing showtime, including a fully occupied preferred section, is rescanned every 30 minutes so short-lived refunds and newly released seat blocks can be detected.
+Every newly listed matching showtime is scanned immediately. Every existing showtime, including a fully occupied preferred section, is rescanned every 30 minutes so short-lived refunds and newly released seat blocks can be detected.
 
 Until the configured September 16 listing horizon has passed, an empty target-showtime response is treated as a monitor failure and reported to Discord. This prevents an API or filtering break from appearing as a quiet successful scan.
+
+## Customize your Cineplex watch
+
+This version supports one active Cineplex watch per deployment. Update these values in `monitor.config.json`:
+
+| Setting | Purpose |
+| --- | --- |
+| `movie.name` | Movie name used in logs and Discord alerts |
+| `movie.filmId` | Cineplex film ID used by the showtime API |
+| `movie.pageUrl` | Public movie page kept as a reference |
+| `movie.posterUrl` | Optional image displayed in Discord alerts |
+| `movie.requiredExperienceTypes` | Every required format marker, such as `IMAX` and `70mm` |
+| `theatre.id` | Cineplex theatre ID |
+| `theatre.name` and `theatre.timezone` | Alert display name and local showtime timezone |
+| `seats.preferredRows` | Acceptable auditorium rows |
+| `seats.minimumNumber` / `maximumNumber` | Inclusive acceptable seat-number range |
+| `seats.minimumAdjacent` | Smallest adjacent group that triggers an alert |
+| `seats.bestAdjacent` | Group size that receives the green `BEST` treatment |
+| `seats.allowedTypes` | Allowed Cineplex seat types, normally `Standard` |
+| `monitoring.expectShowtimesUntil` | ISO date-time through which zero matching showtimes should be considered suspicious |
+
+The `theatreId` appears in Cineplex seat-preview URLs. To find a `filmId` and the exact format names, open the target Cineplex movie or showtime, inspect the browser developer tools **Network** tab, and examine the `v1/showtimes` request and response.
+
+After editing the configuration:
+
+```powershell
+npm test
+npm run dry-run
+```
+
+Confirm that the dry run discovers only the intended Cineplex movie, theatre, and formats. It performs live read-only checks without saving state or sending Discord messages. A deliberate change to the movie, theatre, formats, or seat criteria receives a fresh state identity automatically; the included Odyssey deployment retains its existing legacy state during this upgrade.
 
 ## Secrets and Discord setup
 
@@ -58,7 +89,7 @@ npm run notify-test
 
 The workflow runs every 30 minutes on GitHub's servers, so the computer that created this repository can be off. GitHub's scheduler may occasionally start a run late.
 
-Every push-triggered, manually dispatched, and scheduled run force-scans every currently listed IMAX 70mm date and time. This avoids scheduler-delay edge cases and verifies deployments end to end. Monitor state is kept in the GitHub Actions cache to prevent duplicate alerts.
+Every push-triggered, manually dispatched, and scheduled run force-scans every date and time matching the configuration. This avoids scheduler-delay edge cases and verifies deployments end to end. Monitor state is kept in the GitHub Actions cache to prevent duplicate alerts.
 
 The included workflow runs every 30 minutes. A public repository can use standard GitHub-hosted runners without consuming private-repository Actions minutes. If this repository is private, check the account's Actions allowance and reduce the cron frequency if needed.
 

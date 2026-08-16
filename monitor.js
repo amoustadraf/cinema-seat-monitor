@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -12,7 +13,8 @@ const notifyTest = args.has("--notify-test");
 const notifyFailure = args.has("--notify-failure");
 
 const emptyState = {
-  version: 1,
+  version: 2,
+  watchIdentity: null,
   lastCheckedAt: null,
   lastDiscoveryAt: null,
   sessions: {}
@@ -54,20 +56,31 @@ async function writeJson(filePath, value) {
 }
 
 async function appendLog(config, level, message, details = {}) {
-  const filePath = resolveConfiguredPath(config.monitoring.logFile, "ODYSSEY_LOG_FILE");
+  const filePath = resolveConfiguredPath(
+    config.monitoring.logFile,
+    "CINEMA_MONITOR_LOG_FILE",
+    "ODYSSEY_LOG_FILE"
+  );
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.appendFile(filePath, `${JSON.stringify({ at: new Date().toISOString(), level, message, ...details })}\n`, "utf8");
 }
 
-function resolveConfiguredPath(configPath, environmentVariable) {
-  return path.resolve(ROOT, process.env[environmentVariable] || configPath);
+export function resolveConfiguredPath(
+  configPath,
+  environmentVariable,
+  legacyEnvironmentVariable,
+  environment = process.env
+) {
+  return path.resolve(ROOT, environment[environmentVariable] || environment[legacyEnvironmentVariable] || configPath);
 }
 
 export function validateConfig(config) {
   const required = [
+    [config?.movie?.name, "movie.name"],
     [config?.movie?.filmId, "movie.filmId"],
     [config?.movie?.requiredExperienceTypes?.length, "movie.requiredExperienceTypes"],
     [config?.theatre?.id, "theatre.id"],
+    [config?.theatre?.name, "theatre.name"],
     [config?.theatre?.timezone, "theatre.timezone"],
     [config?.seats?.preferredRows?.length, "seats.preferredRows"],
     [config?.seats?.allowedTypes?.length, "seats.allowedTypes"],
@@ -87,6 +100,23 @@ export function validateConfig(config) {
   ];
   for (const [value, label] of required) {
     if (!value) throw new Error(`Missing required configuration: ${label}`);
+  }
+  for (const [value, label, maximumLength] of [
+    [config.movie.name, "movie.name", 150],
+    [config.theatre.name, "theatre.name", 100]
+  ]) {
+    if (typeof value !== "string" || !value.trim() || value.length > maximumLength) {
+      throw new Error(`${label} must be a non-empty string no longer than ${maximumLength} characters.`);
+    }
+  }
+  for (const [values, label] of [
+    [config.movie.requiredExperienceTypes, "movie.requiredExperienceTypes"],
+    [config.seats.preferredRows, "seats.preferredRows"],
+    [config.seats.allowedTypes, "seats.allowedTypes"]
+  ]) {
+    if (!values.every((value) => typeof value === "string" && value.trim())) {
+      throw new Error(`${label} must contain only non-empty strings.`);
+    }
   }
   const positiveIntegers = [
     [config.seats.minimumAdjacent, "seats.minimumAdjacent"],
@@ -133,7 +163,9 @@ export function validateConfig(config) {
   }
   for (const [value, label] of [
     [config.api.theatricalBaseUrl, "api.theatricalBaseUrl"],
-    [config.api.ticketingBaseUrl, "api.ticketingBaseUrl"]
+    [config.api.ticketingBaseUrl, "api.ticketingBaseUrl"],
+    ...(config.movie.pageUrl ? [[config.movie.pageUrl, "movie.pageUrl"]] : []),
+    ...(config.movie.posterUrl ? [[config.movie.posterUrl, "movie.posterUrl"]] : [])
   ]) {
     try {
       if (new URL(value).protocol !== "https:") throw new Error();
@@ -148,6 +180,52 @@ export function resolveCineplexApiKey(config, environment = process.env) {
   const key = environment[environmentVariable] || "";
   if (!key) throw new Error(`${environmentVariable} is required for Cineplex API requests.`);
   return key;
+}
+
+export function formatExperienceLabel(config) {
+  return config.movie.requiredExperienceTypes.join(" + ");
+}
+
+export function buildWatchIdentity(config) {
+  const identity = {
+    provider: "cineplex",
+    filmId: String(config.movie.filmId),
+    theatreId: String(config.theatre.id),
+    experienceTypes: config.movie.requiredExperienceTypes.map((value) => value.trim().toLowerCase()).sort(),
+    preferredRows: config.seats.preferredRows.map((value) => value.trim().toUpperCase()).sort(),
+    minimumNumber: config.seats.minimumNumber,
+    maximumNumber: config.seats.maximumNumber,
+    minimumAdjacent: config.seats.minimumAdjacent,
+    bestAdjacent: config.seats.bestAdjacent,
+    allowedTypes: config.seats.allowedTypes.map((value) => value.trim().toLowerCase()).sort()
+  };
+  const digest = createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 20);
+  return `cineplex:${digest}`;
+}
+
+export function initializeStateForWatch(savedState, config) {
+  const watchIdentity = buildWatchIdentity(config);
+  const existingIdentity = savedState?.watchIdentity || null;
+  if (existingIdentity && existingIdentity !== watchIdentity) {
+    return {
+      state: { ...structuredClone(emptyState), watchIdentity },
+      reset: true,
+      adoptedLegacyState: false
+    };
+  }
+  return {
+    state: {
+      ...structuredClone(emptyState),
+      ...(savedState || {}),
+      version: emptyState.version,
+      watchIdentity,
+      sessions: savedState?.sessions && typeof savedState.sessions === "object" && !Array.isArray(savedState.sessions)
+        ? savedState.sessions
+        : {}
+    },
+    reset: false,
+    adoptedLegacyState: Boolean(savedState && !existingIdentity)
+  };
 }
 
 export function assertExpectedShowtimes(discovered, monitoring, now = Date.now()) {
@@ -185,7 +263,7 @@ async function fetchJson(config, url) {
         "Accept": "application/json",
         "Accept-Language": API_LANGUAGE,
         "Ocp-Apim-Subscription-Key": resolveCineplexApiKey(config),
-        "User-Agent": "odyssey-cinema-monitor/1.0 (personal availability monitor)"
+        "User-Agent": "cineplex-seat-monitor/1.0 (personal availability monitor)"
       },
       signal: controller.signal
     });
@@ -376,7 +454,7 @@ export function buildDiscordTicketPayload(config, session, groups, mention = "")
   const when = formatShowtime(session, config);
   const best = Math.max(...groups.map((group) => group.count));
   const isBest = best >= config.seats.bestAdjacent;
-  const title = isBest ? `🎟️ ${best} seats together found!` : `🎬 ${best} seats together found!`;
+  const title = `${isBest ? "🎟️" : "🎬"} ${best} seats together for ${config.movie.name}`.slice(0, 256);
   const url = session.seatMapUrl || buildSeatPreviewUrl(config.theatre.id, session.showtimeId);
   return {
     content: [mention.trim(), `**Seats are available:** ${url}`].filter(Boolean).join("\n").slice(0, 2000),
@@ -389,7 +467,7 @@ export function buildDiscordTicketPayload(config, session, groups, mention = "")
       fields: [
         { name: "📅 Date", value: when.date, inline: true },
         { name: "🕒 Time", value: when.time, inline: true },
-        { name: "🎞️ Format", value: "IMAX 70mm", inline: true },
+        { name: "🎞️ Format", value: formatExperienceLabel(config), inline: true },
         { name: "📍 Cinema", value: config.theatre.name, inline: false },
         { name: "🎯 Preferred zone", value: `Rows ${config.seats.preferredRows.join("–")}, seats ${config.seats.minimumNumber}–${config.seats.maximumNumber}`, inline: false }
       ],
@@ -410,7 +488,7 @@ export function buildDiscordTicketBatches(config, alerts, mention = "") {
     batches.push({
       content: [
         index === 0 ? mention.trim() : "",
-        `🎟️ **${alerts.length} Odyssey IMAX 70mm showtime${alerts.length === 1 ? " has" : "s have"} matching seats.** Open a showtime below to select seats and buy tickets.`
+        `🎟️ **${alerts.length} ${config.movie.name} — ${formatExperienceLabel(config)} showtime${alerts.length === 1 ? " has" : "s have"} matching seats.** Open a showtime below to select seats and buy tickets.`
       ].filter(Boolean).join("\n").slice(0, 2000),
       allowed_mentions: { parse: ["users", "roles"] },
       embeds
@@ -427,15 +505,15 @@ export function buildDiscordFailurePayload(config, environment = process.env, me
   const commit = (environment.GITHUB_SHA || "").slice(0, 7) || "Unknown";
 
   return {
-    content: [mention.trim(), "🚨 **Odyssey monitor needs attention.**"].filter(Boolean).join("\n").slice(0, 2000),
+    content: [mention.trim(), `🚨 **${config.movie.name} monitor needs attention.**`].filter(Boolean).join("\n").slice(0, 2000),
     allowed_mentions: { parse: ["users", "roles"] },
     embeds: [{
-      title: "Odyssey monitor failed",
+      title: `${config.movie.name} monitor failed`.slice(0, 256),
       url: runUrl,
       description: `The scheduled cinema scan did not finish successfully.\n\n[**Open the failed GitHub Actions run →**](${runUrl})`,
       color: 0xE74C3C,
       fields: [
-        { name: "Workflow", value: environment.GITHUB_WORKFLOW || "Odyssey IMAX 70mm Seat Monitor", inline: true },
+        { name: "Workflow", value: environment.GITHUB_WORKFLOW || "Cineplex Seat Monitor", inline: true },
         { name: "Branch", value: environment.GITHUB_REF_NAME || "Unknown", inline: true },
         { name: "Commit", value: commit, inline: true },
         { name: "Repository", value: repository, inline: false }
@@ -446,12 +524,12 @@ export function buildDiscordFailurePayload(config, environment = process.env, me
   };
 }
 
-function buildDiscordTestPayload(config) {
+export function buildDiscordTestPayload(config) {
   const preview = buildSeatPreviewUrl(config.theatre.id, "SHOWTIME_ID");
   return {
-    content: "✅ Odyssey monitor is connected to this Discord channel.",
+    content: `✅ ${config.movie.name} monitor is connected to this Discord channel.`,
     embeds: [{
-      title: "Odyssey IMAX 70mm monitor test",
+      title: `${config.movie.name} — ${formatExperienceLabel(config)} monitor test`.slice(0, 256),
       description: "Discord notifications are configured correctly. Real alerts will include the date, time, exact adjacent seats, and a direct Cineplex seat-map link.",
       color: 0x3498DB,
       fields: [
@@ -565,9 +643,18 @@ async function main() {
     return;
   }
 
-  const stateFile = resolveConfiguredPath(config.monitoring.stateFile, "ODYSSEY_STATE_FILE");
-  const state = { ...structuredClone(emptyState), ...(await readJson(stateFile, emptyState)) };
-  state.sessions ||= {};
+  const stateFile = resolveConfiguredPath(
+    config.monitoring.stateFile,
+    "CINEMA_MONITOR_STATE_FILE",
+    "ODYSSEY_STATE_FILE"
+  );
+  const stateInitialization = initializeStateForWatch(await readJson(stateFile, null), config);
+  const state = stateInitialization.state;
+  if (stateInitialization.reset) {
+    console.log("Watch configuration changed; previous session state was reset for the new Cineplex watch.");
+  } else if (stateInitialization.adoptedLegacyState) {
+    console.log("Adopted legacy monitor state for the current Cineplex watch.");
+  }
   const checkedAt = new Date().toISOString();
   const discovered = discoverTargetShowtimes(await fetchShowtimes(config), config);
   assertExpectedShowtimes(discovered, config.monitoring);
@@ -576,7 +663,7 @@ async function main() {
   const alerts = [];
   const layoutCache = new Map();
 
-  console.log(`Discovered ${discovered.length} upcoming IMAX 70mm showtime(s).`);
+  console.log(`Discovered ${discovered.length} upcoming ${formatExperienceLabel(config)} showtime(s) for ${config.movie.name}.`);
 
   for (const session of discovered) {
     const previous = state.sessions[session.showtimeId];

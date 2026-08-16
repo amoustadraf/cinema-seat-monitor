@@ -1,16 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   assertExpectedShowtimes,
   buildDiscordFailurePayload,
+  buildDiscordTestPayload,
   buildDiscordTicketPayload,
   buildDiscordTicketBatches,
   buildSeatPreviewUrl,
+  buildWatchIdentity,
   discoverTargetShowtimes,
   extractPreferredAvailableSeats,
   findAdjacentGroups,
+  formatExperienceLabel,
   getRescanIntervalMinutes,
+  initializeStateForWatch,
   markAlertsDelivered,
+  resolveConfiguredPath,
   resolveCineplexApiKey,
   shouldSendSeatAlert,
   validateConfig,
@@ -18,7 +24,7 @@ import {
 } from "../monitor.js";
 
 const config = {
-  movie: { filmId: 37617, requiredExperienceTypes: ["IMAX", "70mm"], posterUrl: "https://example.com/poster.jpg" },
+  movie: { name: "The Odyssey", filmId: 37617, requiredExperienceTypes: ["IMAX", "70mm"], posterUrl: "https://example.com/poster.jpg" },
   theatre: { id: 9406, name: "Cinéma Banque Scotia Montréal", timezone: "America/Toronto" },
   seats: { preferredRows: ["G", "H", "I", "J"], minimumNumber: 9, maximumNumber: 25, minimumAdjacent: 2, bestAdjacent: 3, allowedTypes: ["Standard"] },
   monitoring: {
@@ -33,17 +39,81 @@ const config = {
   api: { theatricalBaseUrl: "https://example.com/theatrical", ticketingBaseUrl: "https://example.com/ticketing" }
 };
 
+const shippedConfig = JSON.parse(readFileSync(new URL("../monitor.config.json", import.meta.url), "utf8"));
+
+test("shipped configuration preserves the working Odyssey Montréal watch", () => {
+  assert.equal(shippedConfig.movie.name, "The Odyssey: The IMAX Experience® in 70MM Film");
+  assert.equal(shippedConfig.movie.filmId, 37617);
+  assert.equal(shippedConfig.theatre.id, 9406);
+  assert.equal(shippedConfig.theatre.name, "Cinéma Banque Scotia Montréal");
+  assert.deepEqual(shippedConfig.movie.requiredExperienceTypes, ["IMAX", "70mm"]);
+  assert.deepEqual(shippedConfig.seats.preferredRows, ["G", "H", "I", "J"]);
+  assert.equal(shippedConfig.seats.minimumNumber, 9);
+  assert.equal(shippedConfig.seats.maximumNumber, 25);
+  assert.equal(shippedConfig.seats.minimumAdjacent, 2);
+  assert.equal(shippedConfig.seats.bestAdjacent, 3);
+  assert.equal(shippedConfig.monitoring.expectShowtimesUntil, "2026-09-17T03:59:59Z");
+  assert.doesNotThrow(() => validateConfig(shippedConfig));
+});
+
 test("configuration validation rejects unsafe or inconsistent values", () => {
   assert.doesNotThrow(() => validateConfig(config));
+  assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, name: "" } }), /movie.name/);
+  assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, name: "x".repeat(151) } }), /150 characters/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, maximumNumber: 8 } }), /maximumNumber/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, bestAdjacent: 1 } }), /bestAdjacent/);
   assert.throws(() => validateConfig({ ...config, theatre: { ...config.theatre, timezone: "Not\/A-Timezone" } }), /Invalid theatre.timezone/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, timeoutSeconds: 0 } }), /timeout/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 2.5 } }), /positive integer/);
   assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "http:\/\/example.com" } }), /valid HTTPS URL/);
+  assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, posterUrl: "not-a-url" } }), /movie.posterUrl/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, expectShowtimesUntil: "not-a-date" } }), /valid date-time/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, retainPastSessionsDays: -1 } }), /non-negative integer/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 18, bestAdjacent: 18 } }), /cannot exceed/);
+  assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, preferredRows: ["G", ""] } }), /non-empty strings/);
+});
+
+test("watch identity preserves legacy state and resets state after a deliberate watch change", () => {
+  const fresh = initializeStateForWatch(null, config);
+  assert.equal(fresh.adoptedLegacyState, false);
+  assert.equal(fresh.reset, false);
+  assert.deepEqual(fresh.state.sessions, {});
+
+  const legacyState = { version: 1, lastCheckedAt: "2026-08-13T12:00:00Z", sessions: { abc: { lastAlertSignature: "G:9-11" } } };
+  const adopted = initializeStateForWatch(legacyState, config);
+  assert.equal(adopted.adoptedLegacyState, true);
+  assert.equal(adopted.reset, false);
+  assert.deepEqual(adopted.state.sessions, legacyState.sessions);
+  assert.equal(adopted.state.watchIdentity, buildWatchIdentity(config));
+  const resumed = initializeStateForWatch(adopted.state, config);
+  assert.equal(resumed.reset, false);
+  assert.equal(resumed.adoptedLegacyState, false);
+  assert.deepEqual(resumed.state.sessions, legacyState.sessions);
+
+  const reorderedConfig = {
+    ...config,
+    movie: { ...config.movie, requiredExperienceTypes: ["70mm", "IMAX"] },
+    seats: { ...config.seats, preferredRows: ["J", "I", "H", "G"] }
+  };
+  assert.equal(buildWatchIdentity(reorderedConfig), buildWatchIdentity(config));
+
+  const changedConfig = { ...config, movie: { ...config.movie, filmId: 99999, name: "Another Movie" } };
+  const reset = initializeStateForWatch(adopted.state, changedConfig);
+  assert.equal(reset.reset, true);
+  assert.deepEqual(reset.state.sessions, {});
+  assert.notEqual(reset.state.watchIdentity, adopted.state.watchIdentity);
+});
+
+test("generic runtime paths prefer new names and accept legacy Odyssey overrides", () => {
+  const generic = resolveConfiguredPath("fallback.json", "CINEMA_MONITOR_STATE_FILE", "ODYSSEY_STATE_FILE", {
+    CINEMA_MONITOR_STATE_FILE: "generic.json",
+    ODYSSEY_STATE_FILE: "legacy.json"
+  });
+  const legacy = resolveConfiguredPath("fallback.json", "CINEMA_MONITOR_STATE_FILE", "ODYSSEY_STATE_FILE", {
+    ODYSSEY_STATE_FILE: "legacy.json"
+  });
+  assert.match(generic, /generic\.json$/);
+  assert.match(legacy, /legacy\.json$/);
 });
 
 test("expected listing horizon turns a suspicious empty discovery into a failure", () => {
@@ -72,6 +142,35 @@ test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
   const result = discoverTargetShowtimes(payload, config, Date.parse("2026-08-01T00:00:00Z"));
   assert.deepEqual(result.map((item) => item.showtimeId), ["123"]);
   assert.match(result[0].seatMapUrl, /showtimeId=123/);
+});
+
+test("a different Cineplex configuration drives discovery and Discord wording", () => {
+  const alternate = {
+    ...structuredClone(config),
+    movie: { name: "Moonlight Redux", filmId: 555, requiredExperienceTypes: ["VIP"], posterUrl: "" },
+    theatre: { id: 777, name: "Cineplex Example Theatre", timezone: "America/Vancouver" },
+    seats: { ...config.seats, preferredRows: ["C", "D"], minimumNumber: 4, maximumNumber: 12 }
+  };
+  const showtimePayload = [{ theatreId: 777, dates: [{ movies: [{ id: 555, experiences: [{
+    experienceTypes: ["VIP"],
+    sessions: [{ vistaSessionId: 888, showStartDateTimeUtc: "2026-09-03T03:00:00Z", showStartDateTime: "2026-09-02T20:00:00" }]
+  }] }] }] }];
+  const sessions = discoverTargetShowtimes(showtimePayload, alternate, Date.parse("2026-08-01T00:00:00Z"));
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].showtimeId, "888");
+  assert.match(sessions[0].seatMapUrl, /theatreId=777/);
+  assert.equal(formatExperienceLabel(alternate), "VIP");
+
+  const groups = [{ row: "D", count: 2, from: 6, to: 7, labels: ["D6", "D7"] }];
+  const ticket = buildDiscordTicketPayload(alternate, sessions[0], groups);
+  const batch = buildDiscordTicketBatches(alternate, [{ session: sessions[0], groups }])[0];
+  const failure = buildDiscordFailurePayload(alternate, {});
+  const connectionTest = buildDiscordTestPayload(alternate);
+  const serialized = JSON.stringify({ ticket, batch, failure, connectionTest });
+  assert.match(serialized, /Moonlight Redux/);
+  assert.match(serialized, /Cineplex Example Theatre/);
+  assert.match(serialized, /VIP/);
+  assert.doesNotMatch(serialized, /Odyssey|IMAX 70mm/);
 });
 
 test("ignores malformed sessions without a start time", () => {
