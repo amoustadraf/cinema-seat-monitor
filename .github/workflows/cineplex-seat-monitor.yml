@@ -37,7 +37,6 @@ jobs:
           key: cinema-seat-state-${{ github.run_id }}
           restore-keys: |
             cinema-seat-state-
-            odyssey-seat-state-
 
       - name: Run tests
         run: npm test
@@ -103,6 +102,16 @@ jobs:
           BRANCH_NAME: ${{ github.ref_name }}
           SHORT_SHA: ${{ github.sha }}
         run: |
+          webhook_pattern='^https://(discord\.com|ptb\.discord\.com|canary\.discord\.com|discordapp\.com)/api/webhooks/[0-9]+/[^/?#]+(\?[^#]*)?$'
+          if [[ ! "$DISCORD_WEBHOOK_URL" =~ $webhook_pattern ]]; then
+            echo "DISCORD_WEBHOOK_URL must be an official Discord HTTPS webhook URL."
+            exit 1
+          fi
+          if [[ "$DISCORD_WEBHOOK_URL" == *\?* ]]; then
+            webhook_url="${DISCORD_WEBHOOK_URL}&wait=true"
+          else
+            webhook_url="${DISCORD_WEBHOOK_URL}?wait=true"
+          fi
           movie_name=$(jq -r '.movie.name // empty' monitor.config.json 2>/dev/null || true)
           monitor_name=${movie_name:-Cinema seat monitor}
           payload=$(jq -n \
@@ -115,7 +124,15 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             '{
               content: (($mention + "\n🚨 **" + $monitor_name + " monitor needs attention.**") | ltrimstr("\n")),
-              allowed_mentions: {parse: ["users", "roles"]},
+              allowed_mentions: (
+                if ($mention | test("^<@&[0-9]+>$")) then
+                  {parse: [], roles: [($mention | match("[0-9]+").string)]}
+                elif ($mention | test("^<@!?[0-9]+>$")) then
+                  {parse: [], users: [($mention | match("[0-9]+").string)]}
+                else
+                  {parse: []}
+                end
+              ),
               embeds: [{
                 title: ($monitor_name + " monitor failed"),
                 url: $run_url,
@@ -132,6 +149,8 @@ jobs:
             }')
           curl --fail-with-body --silent --show-error \
             --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            --proto '=https' \
+            --output /dev/null \
             -H "Content-Type: application/json" \
             --data "$payload" \
-            "${DISCORD_WEBHOOK_URL}?wait=true"
+            "$webhook_url"

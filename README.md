@@ -47,7 +47,7 @@ npm test
 npm run dry-run
 ```
 
-Confirm that the dry run discovers only the intended Cineplex movie, theatre, and formats. It performs live read-only checks without saving state or sending Discord messages. A deliberate change to the movie, theatre, formats, or seat criteria receives a fresh state identity automatically; the included Odyssey deployment retains its existing legacy state during this upgrade.
+Confirm that the dry run discovers only the intended Cineplex movie, theatre, and formats. It performs live read-only checks without saving state or sending Discord messages. A deliberate change to the movie, theatre, formats, or seat criteria receives a fresh state identity automatically. The included Odyssey deployment retained its notification history when the generic cache was introduced.
 
 ## Secrets and Discord setup
 
@@ -96,3 +96,7 @@ The included workflow runs every 30 minutes. A public repository can use standar
 ## Safety and scope
 
 The monitor performs read-only availability checks. It never selects or reserves seats, creates a cart, signs in, bypasses queues, or purchases tickets. A Discord alert opens Cineplex so the purchase remains fully manual.
+
+The Cineplex subscription key is sent only to HTTPS endpoints on `apis.cineplex.com`, and the Discord webhook is accepted only on Discord's official webhook hosts. Secrets are read from environment variables and are never written to monitor state or diagnostic logs. Configured state and log paths must stay inside the project directory.
+
+GitHub Actions caches and failure artifacts can contain the configured movie and theatre, public showtime IDs, seat labels, availability results, timestamps, and error diagnostics. They do not contain Cineplex account, payment, Discord webhook, API-key, or Discord-mention data. Discord pings are limited to the one explicit user or role ID in `DISCORD_MENTION`; mention-like movie text cannot trigger additional pings.

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   assertExpectedShowtimes,
+  buildAllowedMentions,
   buildDiscordFailurePayload,
   buildDiscordTestPayload,
   buildDiscordTicketPayload,
@@ -16,6 +17,7 @@ import {
   getRescanIntervalMinutes,
   initializeStateForWatch,
   markAlertsDelivered,
+  redactSensitiveText,
   resolveConfiguredPath,
   resolveCineplexApiKey,
   shouldSendSeatAlert,
@@ -36,7 +38,7 @@ const config = {
     logFile: ".monitor-cache/monitor.log"
   },
   notifications: { discord: { enabled: true } },
-  api: { theatricalBaseUrl: "https://example.com/theatrical", ticketingBaseUrl: "https://example.com/ticketing" }
+  api: { theatricalBaseUrl: "https://apis.cineplex.com/test/theatrical", ticketingBaseUrl: "https://apis.cineplex.com/test/ticketing" }
 };
 
 const shippedConfig = JSON.parse(readFileSync(new URL("../monitor.config.json", import.meta.url), "utf8"));
@@ -60,17 +62,48 @@ test("configuration validation rejects unsafe or inconsistent values", () => {
   assert.doesNotThrow(() => validateConfig(config));
   assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, name: "" } }), /movie.name/);
   assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, name: "x".repeat(151) } }), /150 characters/);
+  assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, name: "Bad\nName" } }), /movie.name/);
+  assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, filmId: "../../bad" } }), /numeric Cineplex ID/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, maximumNumber: 8 } }), /maximumNumber/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, bestAdjacent: 1 } }), /bestAdjacent/);
   assert.throws(() => validateConfig({ ...config, theatre: { ...config.theatre, timezone: "Not\/A-Timezone" } }), /Invalid theatre.timezone/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, timeoutSeconds: 0 } }), /timeout/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 2.5 } }), /positive integer/);
-  assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "http:\/\/example.com" } }), /valid HTTPS URL/);
+  assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "http:\/\/apis.cineplex.com" } }), /HTTPS apis.cineplex.com/);
+  assert.throws(() => validateConfig({ ...config, api: { ...config.api, ticketingBaseUrl: "https:\/\/example.com" } }), /apis.cineplex.com/);
   assert.throws(() => validateConfig({ ...config, movie: { ...config.movie, posterUrl: "not-a-url" } }), /movie.posterUrl/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, expectShowtimesUntil: "not-a-date" } }), /valid date-time/);
   assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, retainPastSessionsDays: -1 } }), /non-negative integer/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, minimumAdjacent: 18, bestAdjacent: 18 } }), /cannot exceed/);
   assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, preferredRows: ["G", ""] } }), /non-empty strings/);
+  assert.throws(() => validateConfig({ ...config, seats: { ...config.seats, preferredRows: ["G", "g"] } }), /duplicate values/);
+  assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, stateFile: "..\/outside.json" } }), /inside the project/);
+  assert.throws(() => validateConfig({ ...config, monitoring: { ...config.monitoring, logFile: "C:\\temp\\monitor.log" } }), /inside the project/);
+  assert.throws(() => validateConfig({ ...config, api: { ...config.api, subscriptionKeyEnvVar: "DISCORD_WEBHOOK_URL" } }), /api.subscriptionKeyEnvVar/);
+  assert.throws(() => validateConfig({
+    ...config,
+    notifications: { discord: { ...config.notifications.discord, webhookUrlEnvVar: "CINEPLEX_API_KEY" } }
+  }), /notifications.discord.webhookUrlEnvVar/);
+  assert.throws(() => validateConfig({
+    ...config,
+    notifications: { discord: { ...config.notifications.discord, enabled: "false" } }
+  }), /enabled must be a boolean/);
+});
+
+test("diagnostic text redacts every configured secret and mention", () => {
+  const environment = {
+    DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/private-token",
+    CINEPLEX_API_KEY: "cineplex-private-key",
+    DISCORD_MENTION: "<@123456>"
+  };
+  const text = redactSensitiveText(
+    `Webhook ${environment.DISCORD_WEBHOOK_URL}; key ${environment.CINEPLEX_API_KEY}; mention ${environment.DISCORD_MENTION}`,
+    environment
+  );
+  assert.doesNotMatch(text, /private-token|cineplex-private-key|123456/);
+  assert.match(text, /REDACTED:DISCORD_WEBHOOK_URL/);
+  assert.match(text, /REDACTED:CINEPLEX_API_KEY/);
+  assert.match(text, /REDACTED:DISCORD_MENTION/);
 });
 
 test("watch identity preserves legacy state and resets state after a deliberate watch change", () => {
@@ -98,6 +131,9 @@ test("watch identity preserves legacy state and resets state after a deliberate 
   assert.equal(buildWatchIdentity(reorderedConfig), buildWatchIdentity(config));
 
   const changedConfig = { ...config, movie: { ...config.movie, filmId: 99999, name: "Another Movie" } };
+  const changedFromLegacy = initializeStateForWatch(legacyState, changedConfig);
+  assert.equal(changedFromLegacy.reset, true);
+  assert.deepEqual(changedFromLegacy.state.sessions, {});
   const reset = initializeStateForWatch(adopted.state, changedConfig);
   assert.equal(reset.reset, true);
   assert.deepEqual(reset.state.sessions, {});
@@ -114,6 +150,10 @@ test("generic runtime paths prefer new names and accept legacy Odyssey overrides
   });
   assert.match(generic, /generic\.json$/);
   assert.match(legacy, /legacy\.json$/);
+  assert.throws(
+    () => resolveConfiguredPath("..\/outside.json", "CINEMA_MONITOR_STATE_FILE", "ODYSSEY_STATE_FILE", {}),
+    /inside the project/
+  );
 });
 
 test("expected listing horizon turns a suspicious empty discovery into a failure", () => {
@@ -132,6 +172,16 @@ test("Discord webhook validation accepts Discord and rejects unrelated destinati
   );
   assert.throws(() => validateDiscordWebhookUrl("https://example.com/api/webhooks/123456/token-value"), /valid Discord HTTPS/);
   assert.throws(() => validateDiscordWebhookUrl("http://discord.com/api/webhooks/123456/token-value"), /valid Discord HTTPS/);
+  assert.throws(() => validateDiscordWebhookUrl("https://user:password@discord.com/api/webhooks/123456/token-value"), /valid Discord HTTPS/);
+  assert.throws(() => validateDiscordWebhookUrl("https://discord.com:8443/api/webhooks/123456/token-value"), /valid Discord HTTPS/);
+});
+
+test("Discord mentions permit only the explicitly configured user or role", () => {
+  assert.deepEqual(buildAllowedMentions("<@123456>"), { parse: [], users: ["123456"] });
+  assert.deepEqual(buildAllowedMentions("<@!123456>"), { parse: [], users: ["123456"] });
+  assert.deepEqual(buildAllowedMentions("<@&987654>"), { parse: [], roles: ["987654"] });
+  assert.deepEqual(buildAllowedMentions("@everyone"), { parse: [] });
+  assert.deepEqual(buildAllowedMentions("<@123> <@456>"), { parse: [] });
 });
 
 test("discovers only the target theatre, movie, and IMAX 70mm sessions", () => {
@@ -226,6 +276,7 @@ test("Discord payload is friendly and links directly to the showtime seat map", 
   const groups = [{ row: "I", count: 3, from: 14, to: 16, labels: ["I14", "I15", "I16"] }];
   const payload = buildDiscordTicketPayload(config, session, groups, "<@123>");
   assert.match(payload.content, /<@123>/);
+  assert.deepEqual(payload.allowed_mentions, { parse: [], users: ["123"] });
   assert.match(payload.content, /ticketing\/preview/);
   assert.equal(payload.embeds[0].url, session.seatMapUrl);
   assert.match(payload.embeds[0].description, /I14, I15, I16/);
@@ -247,6 +298,8 @@ test("Discord notifications batch large ticket drops into at most ten embeds", (
   assert.equal(batches[0].embeds.length, 10);
   assert.equal(batches[1].embeds.length, 2);
   assert.match(batches[0].content, /<@123>/);
+  assert.deepEqual(batches[0].allowed_mentions, { parse: [], users: ["123"] });
+  assert.deepEqual(batches[1].allowed_mentions, { parse: [] });
   assert.doesNotMatch(batches[1].content, /<@123>/);
   assert.equal(batches[1].embeds[1].url, alerts[11].session.seatMapUrl);
 });

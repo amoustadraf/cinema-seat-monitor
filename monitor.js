@@ -62,7 +62,8 @@ async function appendLog(config, level, message, details = {}) {
     "ODYSSEY_LOG_FILE"
   );
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.appendFile(filePath, `${JSON.stringify({ at: new Date().toISOString(), level, message, ...details })}\n`, "utf8");
+  const entry = JSON.stringify({ at: new Date().toISOString(), level, message, ...details });
+  await fs.appendFile(filePath, `${redactSensitiveText(entry)}\n`, "utf8");
 }
 
 export function resolveConfiguredPath(
@@ -71,7 +72,22 @@ export function resolveConfiguredPath(
   legacyEnvironmentVariable,
   environment = process.env
 ) {
-  return path.resolve(ROOT, environment[environmentVariable] || environment[legacyEnvironmentVariable] || configPath);
+  const trustedOverride = environment[environmentVariable] || environment[legacyEnvironmentVariable];
+  if (trustedOverride) return path.resolve(ROOT, trustedOverride);
+  const portablePath = typeof configPath === "string" ? configPath.replaceAll("\\", "/") : "";
+  const resolved = path.resolve(ROOT, typeof configPath === "string" ? configPath : "");
+  const relative = path.relative(ROOT, resolved);
+  if (typeof configPath !== "string"
+    || !configPath
+    || path.posix.isAbsolute(portablePath)
+    || path.win32.isAbsolute(portablePath)
+    || portablePath.split("/").includes("..")
+    || !relative
+    || relative.startsWith("..")
+    || path.isAbsolute(relative)) {
+    throw new Error("Configured path must be relative and inside the project directory.");
+  }
+  return resolved;
 }
 
 export function validateConfig(config) {
@@ -101,21 +117,49 @@ export function validateConfig(config) {
   for (const [value, label] of required) {
     if (!value) throw new Error(`Missing required configuration: ${label}`);
   }
+  if (typeof config.notifications.discord !== "object" || Array.isArray(config.notifications.discord)) {
+    throw new Error("notifications.discord must be an object.");
+  }
+  if (config.notifications.discord.enabled !== undefined && typeof config.notifications.discord.enabled !== "boolean") {
+    throw new Error("notifications.discord.enabled must be a boolean.");
+  }
   for (const [value, label, maximumLength] of [
     [config.movie.name, "movie.name", 150],
     [config.theatre.name, "theatre.name", 100]
   ]) {
-    if (typeof value !== "string" || !value.trim() || value.length > maximumLength) {
+    if (typeof value !== "string" || !value.trim() || value.length > maximumLength || /[\u0000-\u001F\u007F]/.test(value)) {
       throw new Error(`${label} must be a non-empty string no longer than ${maximumLength} characters.`);
     }
   }
-  for (const [values, label] of [
-    [config.movie.requiredExperienceTypes, "movie.requiredExperienceTypes"],
-    [config.seats.preferredRows, "seats.preferredRows"],
-    [config.seats.allowedTypes, "seats.allowedTypes"]
+  for (const [value, expected, label] of [
+    [config.api.subscriptionKeyEnvVar, "CINEPLEX_API_KEY", "api.subscriptionKeyEnvVar"],
+    [config.notifications.discord.webhookUrlEnvVar, "DISCORD_WEBHOOK_URL", "notifications.discord.webhookUrlEnvVar"],
+    [config.notifications.discord.mentionEnvVar, "DISCORD_MENTION", "notifications.discord.mentionEnvVar"]
+  ]) {
+    if (value !== undefined && value !== expected) {
+      throw new Error(`${label} must be ${expected}.`);
+    }
+  }
+  for (const [value, label] of [
+    [config.movie.filmId, "movie.filmId"],
+    [config.theatre.id, "theatre.id"]
+  ]) {
+    if (!/^[1-9]\d*$/.test(String(value))) throw new Error(`${label} must be a positive numeric Cineplex ID.`);
+  }
+  for (const [values, label, maximumItems, maximumItemLength] of [
+    [config.movie.requiredExperienceTypes, "movie.requiredExperienceTypes", 10, 50],
+    [config.seats.preferredRows, "seats.preferredRows", 50, 10],
+    [config.seats.allowedTypes, "seats.allowedTypes", 20, 50]
   ]) {
     if (!values.every((value) => typeof value === "string" && value.trim())) {
       throw new Error(`${label} must contain only non-empty strings.`);
+    }
+    if (values.length > maximumItems || values.some((value) => value.length > maximumItemLength)) {
+      throw new Error(`${label} exceeds its supported size limit.`);
+    }
+    const normalized = values.map((value) => value.trim().toLowerCase());
+    if (new Set(normalized).size !== normalized.length) {
+      throw new Error(`${label} cannot contain duplicate values.`);
     }
   }
   const positiveIntegers = [
@@ -162,15 +206,40 @@ export function validateConfig(config) {
     throw new Error("monitoring.expectShowtimesUntil must be a valid date-time.");
   }
   for (const [value, label] of [
+    [config.monitoring.stateFile, "monitoring.stateFile"],
+    [config.monitoring.logFile, "monitoring.logFile"]
+  ]) {
+    const portablePath = typeof value === "string" ? value.replaceAll("\\", "/") : "";
+    if (typeof value !== "string"
+      || path.posix.isAbsolute(portablePath)
+      || path.win32.isAbsolute(value)
+      || portablePath.split("/").includes("..")) {
+      throw new Error(`${label} must be a relative path inside the project directory.`);
+    }
+    const relative = path.relative(ROOT, path.resolve(ROOT, value));
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`${label} must be a relative path inside the project directory.`);
+    }
+  }
+  for (const [value, label] of [
     [config.api.theatricalBaseUrl, "api.theatricalBaseUrl"],
     [config.api.ticketingBaseUrl, "api.ticketingBaseUrl"],
     ...(config.movie.pageUrl ? [[config.movie.pageUrl, "movie.pageUrl"]] : []),
     ...(config.movie.posterUrl ? [[config.movie.posterUrl, "movie.posterUrl"]] : [])
   ]) {
     try {
-      if (new URL(value).protocol !== "https:") throw new Error();
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.username || url.password) throw new Error();
+      if (label.startsWith("api.") && (
+        url.hostname.toLowerCase() !== "apis.cineplex.com"
+        || url.username
+        || url.password
+        || url.search
+        || url.hash
+      )) throw new Error();
     } catch {
-      throw new Error(`${label} must be a valid HTTPS URL.`);
+      const requirement = label.startsWith("api.") ? "an HTTPS apis.cineplex.com URL" : "a valid HTTPS URL";
+      throw new Error(`${label} must be ${requirement}.`);
     }
   }
 }
@@ -180,6 +249,15 @@ export function resolveCineplexApiKey(config, environment = process.env) {
   const key = environment[environmentVariable] || "";
   if (!key) throw new Error(`${environmentVariable} is required for Cineplex API requests.`);
   return key;
+}
+
+export function redactSensitiveText(value, environment = process.env) {
+  let redacted = String(value ?? "");
+  for (const key of ["DISCORD_WEBHOOK_URL", "CINEPLEX_API_KEY", "DISCORD_MENTION"]) {
+    const secret = environment[key];
+    if (secret) redacted = redacted.replaceAll(secret, `[REDACTED:${key}]`);
+  }
+  return redacted;
 }
 
 export function formatExperienceLabel(config) {
@@ -203,10 +281,25 @@ export function buildWatchIdentity(config) {
   return `cineplex:${digest}`;
 }
 
+const LEGACY_ODYSSEY_WATCH_IDENTITY = buildWatchIdentity({
+  movie: { filmId: 37617, requiredExperienceTypes: ["IMAX", "70mm"] },
+  theatre: { id: 9406 },
+  seats: {
+    preferredRows: ["G", "H", "I", "J"],
+    minimumNumber: 9,
+    maximumNumber: 25,
+    minimumAdjacent: 2,
+    bestAdjacent: 3,
+    allowedTypes: ["Standard"]
+  }
+});
+
 export function initializeStateForWatch(savedState, config) {
   const watchIdentity = buildWatchIdentity(config);
   const existingIdentity = savedState?.watchIdentity || null;
-  if (existingIdentity && existingIdentity !== watchIdentity) {
+  const incompatibleIdentity = existingIdentity && existingIdentity !== watchIdentity;
+  const incompatibleLegacyState = savedState && !existingIdentity && watchIdentity !== LEGACY_ODYSSEY_WATCH_IDENTITY;
+  if (incompatibleIdentity || incompatibleLegacyState) {
     return {
       state: { ...structuredClone(emptyState), watchIdentity },
       reset: true,
@@ -247,11 +340,11 @@ async function withRetries(config, label, operation) {
     } catch (error) {
       lastError = error;
       if (attempt === attempts) break;
-      console.warn(`${label} failed (${attempt}/${attempts}): ${error.message}`);
+      console.warn(`${label} failed (${attempt}/${attempts}): ${redactSensitiveText(error.message)}`);
       await sleep((config.monitoring.retryDelaySeconds ?? 4) * 1000 * attempt);
     }
   }
-  throw new Error(`${label} failed after ${attempts} attempts: ${lastError.message}`, { cause: lastError });
+  throw new Error(`${label} failed after ${attempts} attempts: ${redactSensitiveText(lastError.message)}`, { cause: lastError });
 }
 
 async function fetchJson(config, url) {
@@ -265,7 +358,8 @@ async function fetchJson(config, url) {
         "Ocp-Apim-Subscription-Key": resolveCineplexApiKey(config),
         "User-Agent": "cineplex-seat-monitor/1.0 (personal availability monitor)"
       },
-      signal: controller.signal
+      signal: controller.signal,
+      redirect: "error"
     });
     const body = await response.text();
     if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}: ${body.slice(0, 300)}`);
@@ -289,11 +383,11 @@ function showtimesUrl(config) {
 }
 
 function seatLayoutUrl(config, showtimeId) {
-  return `${config.api.ticketingBaseUrl}/v1/theatre/${config.theatre.id}/showtime/${showtimeId}/seat-layout`;
+  return `${config.api.ticketingBaseUrl}/v1/theatre/${encodeURIComponent(config.theatre.id)}/showtime/${encodeURIComponent(showtimeId)}/seat-layout`;
 }
 
 function seatAvailabilityUrl(config, showtimeId) {
-  return `${config.api.ticketingBaseUrl}/v1/theatre/${config.theatre.id}/showtime/${showtimeId}/seat-availability?preview=true`;
+  return `${config.api.ticketingBaseUrl}/v1/theatre/${encodeURIComponent(config.theatre.id)}/showtime/${encodeURIComponent(showtimeId)}/seat-availability?preview=true`;
 }
 
 export function buildSeatPreviewUrl(theatreId, showtimeId) {
@@ -458,7 +552,7 @@ export function buildDiscordTicketPayload(config, session, groups, mention = "")
   const url = session.seatMapUrl || buildSeatPreviewUrl(config.theatre.id, session.showtimeId);
   return {
     content: [mention.trim(), `**Seats are available:** ${url}`].filter(Boolean).join("\n").slice(0, 2000),
-    allowed_mentions: { parse: ["users", "roles"] },
+    allowed_mentions: buildAllowedMentions(mention),
     embeds: [{
       title,
       url,
@@ -490,7 +584,7 @@ export function buildDiscordTicketBatches(config, alerts, mention = "") {
         index === 0 ? mention.trim() : "",
         `🎟️ **${alerts.length} ${config.movie.name} — ${formatExperienceLabel(config)} showtime${alerts.length === 1 ? " has" : "s have"} matching seats.** Open a showtime below to select seats and buy tickets.`
       ].filter(Boolean).join("\n").slice(0, 2000),
-      allowed_mentions: { parse: ["users", "roles"] },
+      allowed_mentions: buildAllowedMentions(index === 0 ? mention : ""),
       embeds
     });
   }
@@ -506,7 +600,7 @@ export function buildDiscordFailurePayload(config, environment = process.env, me
 
   return {
     content: [mention.trim(), `🚨 **${config.movie.name} monitor needs attention.**`].filter(Boolean).join("\n").slice(0, 2000),
-    allowed_mentions: { parse: ["users", "roles"] },
+    allowed_mentions: buildAllowedMentions(mention),
     embeds: [{
       title: `${config.movie.name} monitor failed`.slice(0, 256),
       url: runUrl,
@@ -528,6 +622,7 @@ export function buildDiscordTestPayload(config) {
   const preview = buildSeatPreviewUrl(config.theatre.id, "SHOWTIME_ID");
   return {
     content: `✅ ${config.movie.name} monitor is connected to this Discord channel.`,
+    allowed_mentions: { parse: [] },
     embeds: [{
       title: `${config.movie.name} — ${formatExperienceLabel(config)} monitor test`.slice(0, 256),
       description: "Discord notifications are configured correctly. Real alerts will include the date, time, exact adjacent seats, and a direct Cineplex seat-map link.",
@@ -561,10 +656,23 @@ export function validateDiscordWebhookUrl(value) {
   }
   const allowedHosts = new Set(["discord.com", "ptb.discord.com", "canary.discord.com", "discordapp.com"]);
   if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())
+    || url.username
+    || url.password
+    || (url.port && url.port !== "443")
+    || url.hash
     || !/^\/api\/webhooks\/\d+\/[^/]+\/?$/.test(url.pathname)) {
     throw new Error("DISCORD_WEBHOOK_URL must be a valid Discord HTTPS webhook URL.");
   }
   return url;
+}
+
+export function buildAllowedMentions(mention = "") {
+  const value = mention.trim();
+  const role = value.match(/^<@&(\d+)>$/);
+  if (role) return { parse: [], roles: [role[1]] };
+  const user = value.match(/^<@!?(\d+)>$/);
+  if (user) return { parse: [], users: [user[1]] };
+  return { parse: [] };
 }
 
 async function sendDiscord(config, payload) {
@@ -583,7 +691,8 @@ async function sendDiscord(config, payload) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: controller.signal
+      signal: controller.signal,
+      redirect: "error"
     });
     const body = await response.text();
     if (!response.ok) throw new Error(`Discord webhook failed: HTTP ${response.status} ${body.slice(0, 300)}`);
@@ -749,17 +858,19 @@ async function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(async (error) => {
-    console.error(error.stack || error.message || error);
+    const safeMessage = redactSensitiveText(error.message || String(error));
+    const safeStack = redactSensitiveText(error.stack || safeMessage);
+    console.error(safeStack);
     try {
       const config = await readJson(CONFIG_FILE, null);
       if (config?.monitoring?.logFile) {
         await appendLog(config, "error", "Monitor failed", {
-          error: error.message || String(error),
-          stack: error.stack || undefined
+          error: safeMessage,
+          stack: safeStack || undefined
         });
       }
     } catch (loggingError) {
-      console.error(`Could not write failure diagnostics: ${loggingError.message}`);
+      console.error(`Could not write failure diagnostics: ${redactSensitiveText(loggingError.message)}`);
     }
     process.exitCode = 1;
   });
