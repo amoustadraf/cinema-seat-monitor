@@ -2,6 +2,7 @@
   "name": "cinema-seat-monitor",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Configurable Cineplex seat availability monitor with Discord alerts",
   "type": "module",
   "scripts": {
